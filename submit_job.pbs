@@ -15,8 +15,8 @@
 #    bench_cuda.log     — Stages 0-4
 #    bench_cublas.log   — cuBLAS TC ceiling
 #    bench_pytorch.log  — PyTorch FlashAttention-2
-#    profile_v3.log     — Nsight: Stage 3 (wmma 32x32)
-#    profile_v4.log     — Nsight: Stage 4 (wmma 64x64)
+#    profile_v3.nsys-rep — Nsight Systems report: Stage 3
+#    profile_v4.nsys-rep — Nsight Systems report: Stage 4
 #    summary.log        — comparison table
 # ============================================================
 
@@ -70,32 +70,28 @@ echo "--- PyTorch SDPA reference ---"
 python3 reference.py 2>&1 | tee bench_pytorch.log
 echo ""
 
-# ── Nsight profiling ──────────────────────────────────────────────────────────
-# FIX: single quoted comma-separated string — NOT repeated --metrics flags.
-# launch-skip 26: skips warmup(3) + iters(10) for N=1024, then warmup(3) + iters(10)
-# for N=2048 = 26 kernel launches before we hit the first N=4096 invocation.
-METRICS="gpu__time_duration.avg,sm__throughput.avg_pct_of_peak_sustained_elapsed,dram__bytes_read.sum,dram__bytes_write.sum,dram__throughput.avg_pct_of_peak_sustained_elapsed,sm__warps_active.avg_pct_of_peak_sustained_active,smsp__warp_issue_stalled_long_scoreboard_per_warp_active.pct,smsp__warp_issue_stalled_short_scoreboard_per_warp_active.pct,smsp__warp_issue_stalled_wait_per_warp_active.pct"
+# ── Nsight Systems profiling (no perf counter permissions needed) ─────────────
+# nsys profiles timeline/GPU utilization without hardware counters.
+# We profile Stage 3 and Stage 4 separately for clean traces.
+# --capture-range=cudaProfilerApi would be ideal but requires code changes;
+# instead we just profile the whole run and filter in the report.
 
-echo "--- Nsight: Stage 3 (flash_wmma_v3) at N=4096 ---"
-if command -v ncu &>/dev/null; then
-    ncu --kernel-name flash_wmma_v3 \
-        --launch-skip 26 --launch-count 1 \
-        --metrics "$METRICS" \
-        ./flash_attn 2>&1 | tee profile_v3.log
+echo "--- Nsight Systems: profiling Stage 3 + Stage 4 ---"
+if command -v nsys &>/dev/null; then
+    nsys profile \
+        --output profile_stages \
+        --force-overwrite true \
+        --trace cuda,nvtx \
+        --stats true \
+        ./flash_attn > profile_stages_stdout.log 2>&1
+    echo "nsys profile complete — see profile_stages.nsys-rep"
+    echo "GPU kernel summary:"
+    # Print the CUDA kernel summary from nsys stats output
+    grep -A 40 "CUDA Kernel Statistics" profile_stages_stdout.log \
+        | head -45 || echo "  (see profile_stages_stdout.log for full stats)"
 else
-    echo "ncu not in PATH — skipping" | tee profile_v3.log
-fi
-echo ""
-
-echo "--- Nsight: Stage 4 (flash_wmma_v4) at N=4096 ---"
-if command -v ncu &>/dev/null; then
-    ncu --kernel-name flash_wmma_v4 \
-        --launch-skip 26 --launch-count 1 \
-        --metrics "$METRICS" \
-        ./flash_attn 2>&1 | tee profile_v4.log
-else
-    echo "ncu not in PATH — skipping" | tee profile_v4.log
-fi
+    echo "nsys not in PATH — skipping"
+fi | tee profile_nsys.log
 echo ""
 
 # ── Summary ───────────────────────────────────────────────────────────────────
@@ -113,54 +109,48 @@ awk '/N = 4096/{p=1} p && /Stage/{print "  "$0} p && /^$/{p=0}' bench_cuda.log
 echo ""
 
 echo "=== cuBLAS Tensor Core Ceiling ==="
-grep -E "N =|ceiling" bench_cublas.log | sed 's/^/  /'
+awk '/N = 4096/{p=1} p && /ceiling/{print "  "$0; exit}' bench_cublas.log
 echo ""
 
 echo "=== PyTorch FlashAttention-2 Reference (fp16) ==="
-awk '/dtype = fp16/{p=1} p && /N=/{print "  "$0} p && /^$/{p=0}' bench_pytorch.log | head -3
+awk '/dtype = fp16/{p=1} p && /N= *4096/{print "  "$0; exit}' bench_pytorch.log
 echo ""
 
 echo "=== Speedup Table (N=4096) ==="
-S0=$(awk '/N = 4096/{p=1} p && /Stage 0/{print $5; exit}' bench_cuda.log)
-S3=$(awk '/N = 4096/{p=1} p && /Stage 3/{print $5; exit}' bench_cuda.log)
-S4=$(awk '/N = 4096/{p=1} p && /Stage 4/{print $5; exit}' bench_cuda.log)
-T3=$(awk '/N = 4096/{p=1} p && /Stage 3/{print $7; exit}' bench_cuda.log)
-T4=$(awk '/N = 4096/{p=1} p && /Stage 4/{print $7; exit}' bench_cuda.log)
-PT=$(awk '/dtype = fp16/{p=1} p && /N= *4096/{print $2; exit}' bench_pytorch.log)
-PT_T=$(awk '/dtype = fp16/{p=1} p && /N= *4096/{print $4; exit}' bench_pytorch.log)
-CB=$(awk '/N = 4096/{p=1} p && /ceiling/{print $7; exit}' bench_cublas.log)
+# Robust extraction: search for N=4096 block then grab the 4th field (ms value)
+S0=$(awk '/N = 4096/{p=1} p && /Stage 0/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' bench_cuda.log)
+S3=$(awk '/N = 4096/{p=1} p && /Stage 3/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' bench_cuda.log)
+S4=$(awk '/N = 4096/{p=1} p && /Stage 4/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' bench_cuda.log)
+T3=$(awk '/N = 4096/{p=1} p && /Stage 3/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' bench_cuda.log)
+T4=$(awk '/N = 4096/{p=1} p && /Stage 4/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' bench_cuda.log)
+PT=$(awk '/dtype = fp16/{p=1} p && /N= *4096/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' bench_pytorch.log)
+PT_T=$(awk '/dtype = fp16/{p=1} p && /N= *4096/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' bench_pytorch.log)
+CB=$(awk '/N = 4096/{p=1} p && /ceiling/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' bench_cublas.log)
 
-printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 0 (Naive):"      "$S0" "—"
-printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 3 (wmma 32x32):" "$S3" "$T3"
-printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 4 (wmma 64x64):" "$S4" "$T4"
-printf "  %-28s %8s ms   %s TFLOPS\n" "PyTorch SDPA fp16:"    "$PT" "$PT_T"
-printf "  %-28s %8s ms   %s TFLOPS\n" "cuBLAS ceiling:"       "—"   "$CB"
+printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 0 (Naive):"      "${S0:----}"  "—"
+printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 3 (wmma 32x32):" "${S3:----}"  "${T3:----}"
+printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 4 (wmma 64x64):" "${S4:----}"  "${T4:----}"
+printf "  %-28s %8s ms   %s TFLOPS\n" "PyTorch SDPA fp16:"    "${PT:----}"  "${PT_T:----}"
+printf "  %-28s %8s ms   %s TFLOPS\n" "cuBLAS ceiling:"       "—"           "${CB:----}"
 echo ""
 
-[ -n "$S0" ] && [ -n "$S4" ] && \
+[ -n "$S0" ] && [ -n "$S4" ] && [ "$S4" != "0" ] && \
     awk -v a="$S0" -v b="$S4" \
         'BEGIN{printf "  Stage 4 vs Naive:      %.1fx faster\n", a/b}'
-[ -n "$S3" ] && [ -n "$S4" ] && \
+[ -n "$S3" ] && [ -n "$S4" ] && [ "$S4" != "0" ] && \
     awk -v a="$S3" -v b="$S4" \
         'BEGIN{printf "  Stage 4 vs Stage 3:    %.2fx faster\n", a/b}'
-[ -n "$S4" ] && [ -n "$PT" ] && \
+[ -n "$S4" ] && [ -n "$PT" ] && [ "$PT" != "0" ] && \
     awk -v s="$S4" -v p="$PT" \
         'BEGIN{printf "  Stage 4 vs PyTorch:    %.1fx slower  (%.1f%% of FA-2)\n", s/p, p/s*100}'
-[ -n "$T4" ] && [ -n "$CB" ] && \
+[ -n "$T4" ] && [ -n "$CB" ] && [ "$CB" != "0" ] && \
     awk -v t="$T4" -v c="$CB" \
         'BEGIN{printf "  Stage 4 TC efficiency: %.1f%% of cuBLAS ceiling\n", t/c*100}'
 echo ""
 
-echo "=== Nsight Key Metrics — Stage 4 ==="
-grep -E "throughput|stalled_long|stalled_short|warps_active" \
-    profile_v4.log 2>/dev/null | sed 's/^[[:space:]]*/  /' \
-    || echo "  (see profile_v4.log)"
-echo ""
-
-echo "=== Nsight Key Metrics — Stage 3 ==="
-grep -E "throughput|stalled_long|stalled_short|warps_active" \
-    profile_v3.log 2>/dev/null | sed 's/^[[:space:]]*/  /' \
-    || echo "  (see profile_v3.log)"
+echo "=== Nsight Systems — GPU Kernel Summary ==="
+grep -A 40 "CUDA Kernel Statistics\|Time(%)" profile_nsys.log 2>/dev/null \
+    | head -30 | sed 's/^/  /' || echo "  (see profile_nsys.log)"
 echo ""
 
 echo "============================================================"

@@ -721,37 +721,44 @@ __global__ void flash_wmma_v4(const half* __restrict__ Q,
         __syncthreads();
 
         // ── GEMM-I: S[BR,BC] = Q[BR,D] @ K^T[D,BC] ──────────────────────────
-        // Each warp computes S[wr*16:(wr+1)*16, wc*16:(wc+1)*16]
+        // 8 warps, layout: wr=warp_id/2 (0..3 row tiles), wc=warp_id%2 (0..1)
+        // Each warp covers TWO 16×16 col tiles: cols [wc*32 .. wc*32+31]
+        // → 4 row-warps × 2 col-warps × 2 tiles = 16 tiles covering all of S[64,64]
         {
             wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K,
                            half, wmma::row_major> q_frag;
             wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K,
-                           half, wmma::col_major> k_frag;
+                           half, wmma::col_major> k_frag[2];
             wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K,
-                           float> s_frag;
-            wmma::fill_fragment(s_frag, 0.0f);
+                           float> s_frag[2];
+            wmma::fill_fragment(s_frag[0], 0.0f);
+            wmma::fill_fragment(s_frag[1], 0.0f);
 
             for (int kk = 0; kk < D / WMMA_K; kk++) {
                 wmma::load_matrix_sync(q_frag,
                     &sQ[wr * WMMA_M * D + kk * WMMA_K], D);
-                // col_major load of K gives us K^T implicitly
-                wmma::load_matrix_sync(k_frag,
-                    &sK[wc * WMMA_N * D + kk * WMMA_K], D);
-                wmma::mma_sync(s_frag, q_frag, k_frag, s_frag);
+                // Two K^T column tiles: wc*32 and wc*32+16
+                wmma::load_matrix_sync(k_frag[0],
+                    &sK[(wc * 2 + 0) * WMMA_N * D + kk * WMMA_K], D);
+                wmma::load_matrix_sync(k_frag[1],
+                    &sK[(wc * 2 + 1) * WMMA_N * D + kk * WMMA_K], D);
+                wmma::mma_sync(s_frag[0], q_frag, k_frag[0], s_frag[0]);
+                wmma::mma_sync(s_frag[1], q_frag, k_frag[1], s_frag[1]);
             }
 
-            for (int e = 0; e < s_frag.num_elements; e++)
-                s_frag.x[e] *= scale;
-
-            wmma::store_matrix_sync(
-                &sS[wr * WMMA_M * BC + wc * WMMA_N],
-                s_frag, BC, wmma::mem_row_major);
+            for (int f = 0; f < 2; f++) {
+                for (int e = 0; e < s_frag[f].num_elements; e++)
+                    s_frag[f].x[e] *= scale;
+                wmma::store_matrix_sync(
+                    &sS[wr * WMMA_M * BC + (wc * 2 + f) * WMMA_N],
+                    s_frag[f], BC, wmma::mem_row_major);
+            }
         }
         __syncthreads();
 
         // ── Online Softmax — 4 threads per row ───────────────────────────────
-        // With 256 threads and BR=64: tid/4 = row (0..63), tid%4 = lane (0..3)
-        // Each thread covers BC/4 = 16 columns of that row.
+        // 256 threads / 4 per row = 64 rows covered = BR. Correct.
+        // Each thread covers BC/4 = 16 columns.
         {
             int my_row  = tid / 4;
             int my_lane = tid % 4;
@@ -763,7 +770,7 @@ __global__ void flash_wmma_v4(const half* __restrict__ Q,
                 if (kv_start + c < N)
                     local_max = fmaxf(local_max, sS[my_row * BC + c]);
             }
-            // Reduce across 4 threads (lanes 0-3 share same warp)
+            // Reduce across 4 threads covering this row
             local_max = fmaxf(local_max, __shfl_xor_sync(0xffffffff, local_max, 1));
             local_max = fmaxf(local_max, __shfl_xor_sync(0xffffffff, local_max, 2));
             float m_j = local_max;
@@ -777,11 +784,11 @@ __global__ void flash_wmma_v4(const half* __restrict__ Q,
                 row_m[my_row]  = m_new;
             }
 
-            // Rescale running O
+            // Rescale running O — 4 threads stride across all D=64 cols
             for (int c = my_lane; c < D; c += 4)
                 sO[my_row * D + c] *= exp_corr;
 
-            // Compute P = exp(S - m_new), store as half, sum
+            // Compute P = exp(S - m_new), store as half, accumulate sum
             float local_sum = 0.0f;
             for (int c = c_start; c < c_end; c++) {
                 float p = (kv_start + c < N)
@@ -797,30 +804,41 @@ __global__ void flash_wmma_v4(const half* __restrict__ Q,
         __syncthreads();
 
         // ── GEMM-II: O[BR,D] += P[BR,BC] @ V[BC,D] ──────────────────────────
-        // Each warp accumulates its O tile [wr*16:(wr+1)*16, wc*16:(wc+1)*16]
+        // Same warp layout as GEMM-I: each warp covers two 16×16 O col tiles
+        // cols [wc*32 .. wc*32+31], giving full coverage of O[64,64]
         {
             wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K,
                            half, wmma::row_major> p_frag;
             wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K,
-                           half, wmma::row_major> v_frag;
+                           half, wmma::row_major> v_frag[2];
             wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K,
-                           float> o_frag;
+                           float> o_frag[2];
 
-            wmma::load_matrix_sync(o_frag,
-                &sO[wr * WMMA_M * D + wc * WMMA_N],
+            // Load existing O accumulator for both col tiles
+            wmma::load_matrix_sync(o_frag[0],
+                &sO[wr * WMMA_M * D + (wc * 2 + 0) * WMMA_N],
+                D, wmma::mem_row_major);
+            wmma::load_matrix_sync(o_frag[1],
+                &sO[wr * WMMA_M * D + (wc * 2 + 1) * WMMA_N],
                 D, wmma::mem_row_major);
 
             for (int kk = 0; kk < BC / WMMA_K; kk++) {
                 wmma::load_matrix_sync(p_frag,
                     &sP[wr * WMMA_M * BC + kk * WMMA_K], BC);
-                wmma::load_matrix_sync(v_frag,
-                    &sV[kk * WMMA_K * D + wc * WMMA_N], D);
-                wmma::mma_sync(o_frag, p_frag, v_frag, o_frag);
+                wmma::load_matrix_sync(v_frag[0],
+                    &sV[kk * WMMA_K * D + (wc * 2 + 0) * WMMA_N], D);
+                wmma::load_matrix_sync(v_frag[1],
+                    &sV[kk * WMMA_K * D + (wc * 2 + 1) * WMMA_N], D);
+                wmma::mma_sync(o_frag[0], p_frag, v_frag[0], o_frag[0]);
+                wmma::mma_sync(o_frag[1], p_frag, v_frag[1], o_frag[1]);
             }
 
             wmma::store_matrix_sync(
-                &sO[wr * WMMA_M * D + wc * WMMA_N],
-                o_frag, D, wmma::mem_row_major);
+                &sO[wr * WMMA_M * D + (wc * 2 + 0) * WMMA_N],
+                o_frag[0], D, wmma::mem_row_major);
+            wmma::store_matrix_sync(
+                &sO[wr * WMMA_M * D + (wc * 2 + 1) * WMMA_N],
+                o_frag[1], D, wmma::mem_row_major);
         }
         __syncthreads();
 
