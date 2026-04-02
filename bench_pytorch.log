@@ -1,0 +1,23 @@
+==============================================================
+  PyTorch scaled_dot_product_attention  (FlashAttention-2)
+  B=2  nh=16  d=64
+  GPU: NVIDIA A100-SXM4-40GB
+  PyTorch: 2.5.1+cu121
+==============================================================
+
+  dtype = fp16  (matches Stage 3 / Stage 4 inputs)
+  ----------------------------------------------------------
+  N= 1024     0.089 ms   96.31 TFLOPS
+  N= 2048     0.268 ms  128.24 TFLOPS
+  N= 4096     1.011 ms  135.99 TFLOPS
+
+  dtype = fp32  (matches Stage 0/1/2 baseline)
+  ----------------------------------------------------------
+  N= 1024     0.606 ms   14.17 TFLOPS
+  N= 2048     2.319 ms   14.82 TFLOPS
+  N= 4096     8.672 ms   15.85 TFLOPS
+
+==============================================================
+  Compare your Stage 4 TFLOPS to the fp16 numbers above.
+  Stage4 / PyTorch_fp16 = your efficiency vs FlashAttention-2
+==============================================================

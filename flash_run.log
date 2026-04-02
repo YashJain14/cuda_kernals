@@ -1,0 +1,242 @@
+============================================================
+  Job:         13470545.pbs101
+  Node:        x1000c3s6b0n0
+  Started:     Fri Apr  3 01:37:42 +08 2026
+  Working dir: /home/users/ntu/yash012/cuda_kernals
+============================================================
+
+--- Environment ---
+nvcc: NVIDIA (R) Cuda compiler driver
+NVIDIA A100-SXM4-40GB, 40960 MiB
+
+Python:  Python 3.11.15
+PyTorch: 2.5.1+cu121
+
+--- Build ---
+rm -f flash_attn cublas_ref
+nvcc -O3 -arch=sm_80 --use_fast_math -Xcompiler -Wall flash_attention.cu -o flash_attn
+nvcc -O3 -arch=sm_80 --use_fast_math -Xcompiler -Wall cublas_ref.cu -lcublas -o cublas_ref
+Build OK
+
+--- CUDA benchmark: Stages 0-4 ---
+============================================================
+  FlashAttention Benchmark — A100 40GB
+  B=2  nh=16  d=64  B*nh=32
+  Warmup=3  Iters=10
+============================================================
+
+------------------------------------------------------------
+  Sequence Length N = 1024
+  Total FLOPs: 8.590e+09
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   13.124 ms    0.65 TFLOPS
+  Stage 1 (Fused 1-thr/row):   24.280 ms    0.35 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 2 (Tiled coop fp32):   16.819 ms    0.51 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 3 (wmma TC fp16)   :    1.043 ms    8.24 TFLOPS  maxErr=1.11e-06  meanRelErr=9.16e-04
+  Stage 4 (wmma opt BR=64) :    0.761 ms   11.29 TFLOPS  maxErr=2.77e-03  meanRelErr=5.06e-01
+
+------------------------------------------------------------
+  Sequence Length N = 2048
+  Total FLOPs: 3.436e+10
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   40.695 ms    0.84 TFLOPS
+  Stage 1 (Fused 1-thr/row):   72.648 ms    0.47 TFLOPS  maxErr=6.64e-09  meanRelErr=2.17e-06
+  Stage 2 (Tiled coop fp32):   63.806 ms    0.54 TFLOPS  maxErr=6.40e-09  meanRelErr=2.17e-06
+  Stage 3 (wmma TC fp16)   :    3.937 ms    8.73 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 4 (wmma opt BR=64) :    3.023 ms   11.36 TFLOPS  maxErr=2.12e-03  meanRelErr=5.09e-01
+
+------------------------------------------------------------
+  Sequence Length N = 4096
+  Total FLOPs: 1.374e+11
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :  164.678 ms    0.83 TFLOPS
+  Stage 1 (Fused 1-thr/row):  262.330 ms    0.52 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 2 (Tiled coop fp32):  254.641 ms    0.54 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 3 (wmma TC fp16)   :   15.593 ms    8.81 TFLOPS  maxErr=5.43e-07  meanRelErr=1.07e-03
+  Stage 4 (wmma opt BR=64) :   11.342 ms   12.12 TFLOPS  maxErr=1.55e-03  meanRelErr=5.09e-01
+
+============================================================
+  Done. Stage 4 adds: larger tiles (64x64), O in registers.
+============================================================
+
+--- cuBLAS Tensor Core ceiling ---
+============================================================
+  cuBLAS fp16 Tensor Core Ceiling — A100 40GB
+  B=2  nh=16  d=64  B*nh=32
+  Both GEMMs back-to-back, no softmax — best possible.
+============================================================
+
+  N = 1024
+    GEMM-I  (Q@K^T) only :    0.078 ms   54.83 TFLOPS
+    GEMM-II (P@V)   only :    0.069 ms   62.05 TFLOPS
+    Both GEMMs (ceiling) :    0.150 ms   57.26 TFLOPS  <-- target
+
+  N = 2048
+    GEMM-I  (Q@K^T) only :    0.265 ms   64.75 TFLOPS
+    GEMM-II (P@V)   only :    0.229 ms   74.86 TFLOPS
+    Both GEMMs (ceiling) :    0.501 ms   68.53 TFLOPS  <-- target
+
+  N = 4096
+    GEMM-I  (Q@K^T) only :    1.000 ms   68.72 TFLOPS
+    GEMM-II (P@V)   only :    0.940 ms   73.13 TFLOPS
+    Both GEMMs (ceiling) :    1.953 ms   70.37 TFLOPS  <-- target
+
+============================================================
+  Your Stage 4 TFLOPS / cuBLAS ceiling = efficiency %
+============================================================
+
+--- PyTorch SDPA reference ---
+==============================================================
+  PyTorch scaled_dot_product_attention  (FlashAttention-2)
+  B=2  nh=16  d=64
+  GPU: NVIDIA A100-SXM4-40GB
+  PyTorch: 2.5.1+cu121
+==============================================================
+
+  dtype = fp16  (matches Stage 3 / Stage 4 inputs)
+  ----------------------------------------------------------
+  N= 1024     0.089 ms   96.31 TFLOPS
+  N= 2048     0.268 ms  128.24 TFLOPS
+  N= 4096     1.011 ms  135.99 TFLOPS
+
+  dtype = fp32  (matches Stage 0/1/2 baseline)
+  ----------------------------------------------------------
+  N= 1024     0.606 ms   14.17 TFLOPS
+  N= 2048     2.319 ms   14.82 TFLOPS
+  N= 4096     8.672 ms   15.85 TFLOPS
+
+==============================================================
+  Compare your Stage 4 TFLOPS to the fp16 numbers above.
+  Stage4 / PyTorch_fp16 = your efficiency vs FlashAttention-2
+==============================================================
+
+--- Nsight: Stage 3 (flash_wmma_v3) at N=4096 ---
+==PROF== Connected to process 2800715 (/home/users/ntu/yash012/cuda_kernals/flash_attn)
+==ERROR== ERR_NVGPUCTRPERM - The user does not have permission to access NVIDIA GPU Performance Counters on the target device 0. For instructions on enabling permissions and to get more information see https://developer.nvidia.com/ERR_NVGPUCTRPERM
+==PROF== Disconnected from process 2800715
+============================================================
+  FlashAttention Benchmark — A100 40GB
+  B=2  nh=16  d=64  B*nh=32
+  Warmup=3  Iters=10
+============================================================
+
+------------------------------------------------------------
+  Sequence Length N = 1024
+  Total FLOPs: 8.590e+09
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   13.765 ms    0.62 TFLOPS
+  Stage 1 (Fused 1-thr/row):   24.072 ms    0.36 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 2 (Tiled coop fp32):   16.820 ms    0.51 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 3 (wmma TC fp16)   :    1.061 ms    8.10 TFLOPS  maxErr=1.11e-06  meanRelErr=9.16e-04
+  Stage 4 (wmma opt BR=64) :    0.762 ms   11.27 TFLOPS  maxErr=2.77e-03  meanRelErr=5.06e-01
+
+------------------------------------------------------------
+  Sequence Length N = 2048
+  Total FLOPs: 3.436e+10
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   40.669 ms    0.84 TFLOPS
+  Stage 1 (Fused 1-thr/row):   72.728 ms    0.47 TFLOPS  maxErr=6.64e-09  meanRelErr=2.17e-06
+  Stage 2 (Tiled coop fp32):   63.697 ms    0.54 TFLOPS  maxErr=6.40e-09  meanRelErr=2.17e-06
+  Stage 3 (wmma TC fp16)   :    3.965 ms    8.67 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 4 (wmma opt BR=64) :    3.002 ms   11.45 TFLOPS  maxErr=2.12e-03  meanRelErr=5.09e-01
+
+------------------------------------------------------------
+  Sequence Length N = 4096
+  Total FLOPs: 1.374e+11
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :  164.633 ms    0.83 TFLOPS
+  Stage 1 (Fused 1-thr/row):  262.307 ms    0.52 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 2 (Tiled coop fp32):  254.465 ms    0.54 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 3 (wmma TC fp16)   :   15.615 ms    8.80 TFLOPS  maxErr=5.43e-07  meanRelErr=1.07e-03
+  Stage 4 (wmma opt BR=64) :   11.350 ms   12.11 TFLOPS  maxErr=1.55e-03  meanRelErr=5.09e-01
+
+============================================================
+  Done. Stage 4 adds: larger tiles (64x64), O in registers.
+============================================================
+==WARNING== No kernels were profiled.
+==WARNING== Profiling kernels launched by child processes requires the --target-processes all option.
+
+--- Nsight: Stage 4 (flash_wmma_v4) at N=4096 ---
+==PROF== Connected to process 2800928 (/home/users/ntu/yash012/cuda_kernals/flash_attn)
+==ERROR== ERR_NVGPUCTRPERM - The user does not have permission to access NVIDIA GPU Performance Counters on the target device 0. For instructions on enabling permissions and to get more information see https://developer.nvidia.com/ERR_NVGPUCTRPERM
+==PROF== Disconnected from process 2800928
+============================================================
+  FlashAttention Benchmark — A100 40GB
+  B=2  nh=16  d=64  B*nh=32
+  Warmup=3  Iters=10
+============================================================
+
+------------------------------------------------------------
+  Sequence Length N = 1024
+  Total FLOPs: 8.590e+09
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   10.926 ms    0.79 TFLOPS
+  Stage 1 (Fused 1-thr/row):   24.410 ms    0.35 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 2 (Tiled coop fp32):   16.830 ms    0.51 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 3 (wmma TC fp16)   :    1.045 ms    8.22 TFLOPS  maxErr=1.11e-06  meanRelErr=9.16e-04
+  Stage 4 (wmma opt BR=64) :    0.782 ms   10.98 TFLOPS  maxErr=2.77e-03  meanRelErr=5.06e-01
+
+------------------------------------------------------------
+  Sequence Length N = 2048
+  Total FLOPs: 3.436e+10
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   40.696 ms    0.84 TFLOPS
+  Stage 1 (Fused 1-thr/row):   72.648 ms    0.47 TFLOPS  maxErr=6.64e-09  meanRelErr=2.17e-06
+  Stage 2 (Tiled coop fp32):   63.797 ms    0.54 TFLOPS  maxErr=6.40e-09  meanRelErr=2.17e-06
+  Stage 3 (wmma TC fp16)   :    3.935 ms    8.73 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 4 (wmma opt BR=64) :    3.046 ms   11.28 TFLOPS  maxErr=2.12e-03  meanRelErr=5.09e-01
+
+------------------------------------------------------------
+  Sequence Length N = 4096
+  Total FLOPs: 1.374e+11
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :  164.749 ms    0.83 TFLOPS
+  Stage 1 (Fused 1-thr/row):  262.214 ms    0.52 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 2 (Tiled coop fp32):  254.479 ms    0.54 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 3 (wmma TC fp16)   :   15.589 ms    8.82 TFLOPS  maxErr=5.43e-07  meanRelErr=1.07e-03
+  Stage 4 (wmma opt BR=64) :   11.370 ms   12.09 TFLOPS  maxErr=1.55e-03  meanRelErr=5.09e-01
+
+============================================================
+  Done. Stage 4 adds: larger tiles (64x64), O in registers.
+============================================================
+==WARNING== No kernels were profiled.
+==WARNING== Profiling kernels launched by child processes requires the --target-processes all option.
+
+--- Generating summary ---
+============================================================
+  SC4064 FlashAttention — Results Summary
+  Fri Apr  3 01:39:16 +08 2026
+  GPU: NVIDIA A100-SXM4-40GB
+============================================================
+
+=== CUDA Kernel Stages (N=4096) ===
+    Stage 0 (Naive 3-kernel) :  164.678 ms    0.83 TFLOPS
+    Stage 1 (Fused 1-thr/row):  262.330 ms    0.52 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+    Stage 2 (Tiled coop fp32):  254.641 ms    0.54 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+    Stage 3 (wmma TC fp16)   :   15.593 ms    8.81 TFLOPS  maxErr=5.43e-07  meanRelErr=1.07e-03
+    Stage 4 (wmma opt BR=64) :   11.342 ms   12.12 TFLOPS  maxErr=1.55e-03  meanRelErr=5.09e-01
+
+=== cuBLAS Tensor Core Ceiling ===
+    N = 1024
+      Both GEMMs (ceiling) :    0.150 ms   57.26 TFLOPS  <-- target
+    N = 2048
+      Both GEMMs (ceiling) :    0.501 ms   68.53 TFLOPS  <-- target
+    N = 4096
+      Both GEMMs (ceiling) :    1.953 ms   70.37 TFLOPS  <-- target
+    Your Stage 4 TFLOPS / cuBLAS ceiling = efficiency %
+
+=== PyTorch FlashAttention-2 Reference (fp16) ===
+    N= 1024     0.089 ms   96.31 TFLOPS
+    N= 2048     0.268 ms  128.24 TFLOPS
+    N= 4096     1.011 ms  135.99 TFLOPS
+
+=== Speedup Table (N=4096) ===
+  Stage 0 (Naive):                    : ms   — TFLOPS
+  Stage 3 (wmma 32x32):           fp16) ms   15.593 TFLOPS
+  Stage 4 (wmma 64x64):          BR=64) ms   11.342 TFLOPS
+  PyTorch SDPA fp16:               4096 ms   ms TFLOPS
+  cuBLAS ceiling:                   — ms   70.37 TFLOPS
+
+awk: cmd. line:1: fatal: division by zero attempted
+
+Job finished: Fri Apr  3 01:39:16 +08 2026

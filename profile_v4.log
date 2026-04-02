@@ -1,0 +1,44 @@
+==PROF== Connected to process 2800928 (/home/users/ntu/yash012/cuda_kernals/flash_attn)
+==ERROR== ERR_NVGPUCTRPERM - The user does not have permission to access NVIDIA GPU Performance Counters on the target device 0. For instructions on enabling permissions and to get more information see https://developer.nvidia.com/ERR_NVGPUCTRPERM
+==PROF== Disconnected from process 2800928
+============================================================
+  FlashAttention Benchmark — A100 40GB
+  B=2  nh=16  d=64  B*nh=32
+  Warmup=3  Iters=10
+============================================================
+
+------------------------------------------------------------
+  Sequence Length N = 1024
+  Total FLOPs: 8.590e+09
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   10.926 ms    0.79 TFLOPS
+  Stage 1 (Fused 1-thr/row):   24.410 ms    0.35 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 2 (Tiled coop fp32):   16.830 ms    0.51 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 3 (wmma TC fp16)   :    1.045 ms    8.22 TFLOPS  maxErr=1.11e-06  meanRelErr=9.16e-04
+  Stage 4 (wmma opt BR=64) :    0.782 ms   10.98 TFLOPS  maxErr=2.77e-03  meanRelErr=5.06e-01
+
+------------------------------------------------------------
+  Sequence Length N = 2048
+  Total FLOPs: 3.436e+10
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   40.696 ms    0.84 TFLOPS
+  Stage 1 (Fused 1-thr/row):   72.648 ms    0.47 TFLOPS  maxErr=6.64e-09  meanRelErr=2.17e-06
+  Stage 2 (Tiled coop fp32):   63.797 ms    0.54 TFLOPS  maxErr=6.40e-09  meanRelErr=2.17e-06
+  Stage 3 (wmma TC fp16)   :    3.935 ms    8.73 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 4 (wmma opt BR=64) :    3.046 ms   11.28 TFLOPS  maxErr=2.12e-03  meanRelErr=5.09e-01
+
+------------------------------------------------------------
+  Sequence Length N = 4096
+  Total FLOPs: 1.374e+11
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :  164.749 ms    0.83 TFLOPS
+  Stage 1 (Fused 1-thr/row):  262.214 ms    0.52 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 2 (Tiled coop fp32):  254.479 ms    0.54 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 3 (wmma TC fp16)   :   15.589 ms    8.82 TFLOPS  maxErr=5.43e-07  meanRelErr=1.07e-03
+  Stage 4 (wmma opt BR=64) :   11.370 ms   12.09 TFLOPS  maxErr=1.55e-03  meanRelErr=5.09e-01
+
+============================================================
+  Done. Stage 4 adds: larger tiles (64x64), O in registers.
+============================================================
+==WARNING== No kernels were profiled.
+==WARNING== Profiling kernels launched by child processes requires the --target-processes all option.
