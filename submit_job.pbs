@@ -1,0 +1,21 @@
+#!/bin/bash
+#PBS -N sc4064_a1
+#PBS -l select=1:ngpus=1
+#PBS -l walltime=00:10:00
+#PBS -q normal
+#PBS -j oe
+#PBS -o output.log
+#PBS -P 52001004
+
+# Load required modules on ASPIRE 2A
+module load cuda/12.2.2
+
+# Navigate to the working directory
+cd $PBS_O_WORKDIR
+
+# Build all programs
+make clean
+make all
+
+
+./flash_attn
