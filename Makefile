@@ -1,42 +1,28 @@
-# FlashAttention Project — Makefile for A100 (sm_80)
+# ============================================================
+#  Makefile — SC4064 FlashAttention
+#  Targets A100 (sm_80). Builds flash_attn and cublas_ref.
+# ============================================================
 
-NVCC      = nvcc
-NVFLAGS   = -O3 -arch=sm_80 --use_fast_math -Xcompiler -Wall
-TARGET    = flash_attn
+NVCC     = nvcc
+CFLAGS   = -O3 -arch=sm_80 --use_fast_math -Xcompiler -Wall
+LDFLAGS  = -lcublas
 
-# Nsight Compute profiling target
-PROFILE_BINARY = ./$(TARGET)
+.PHONY: all clean run ref
 
-all: $(TARGET)
+all: flash_attn cublas_ref
 
-$(TARGET): flash_attention.cu
-	$(NVCC) $(NVFLAGS) $< -o $@
+flash_attn: flash_attention.cu
+	$(NVCC) $(CFLAGS) $< -o $@
 
-# Run benchmark
-run: $(TARGET)
-	./$(TARGET)
+cublas_ref: cublas_ref.cu
+	$(NVCC) $(CFLAGS) $< $(LDFLAGS) -o $@
 
-# Run PyTorch reference (requires torch installed)
-ref:
+run: flash_attn cublas_ref
+	./flash_attn
+	./cublas_ref
+
+ref: reference.py
 	python3 reference.py
 
-# Profile with Nsight Compute (Stage 3 kernel only)
-profile: $(TARGET)
-	ncu --set full \
-	    --kernel-name flash_wmma_v3 \
-	    --launch-skip 3 --launch-count 1 \
-	    $(PROFILE_BINARY)
-
-# Profile all kernels (brief)
-profile-all: $(TARGET)
-	ncu --metrics \
-	    gpu__time_duration.avg,\
-	    sm__throughput.avg_pct_of_peak_sustained_elapsed,\
-	    dram__throughput.avg_pct_of_peak_sustained_elapsed,\
-	    smsp__warps_active.avg_pct_of_peak_sustained_elapsed \
-	    $(PROFILE_BINARY)
-
 clean:
-	rm -f $(TARGET)
-
-.PHONY: all run ref profile profile-all clean
+	rm -f flash_attn cublas_ref
