@@ -1,0 +1,45 @@
+============================================================
+  SC4064 FlashAttention — Results Summary
+  Fri Apr  3 01:01:57 +08 2026
+  GPU: NVIDIA A100-SXM4-40GB
+============================================================
+
+=== CUDA Kernel Stages ===
+------------------------------------------------------------
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   12.828 ms    0.67 TFLOPS
+  Stage 1 (Fused 1-thr/row):   24.646 ms    0.35 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 2 (Tiled coop fp32):   16.837 ms    0.51 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 3 (wmma TC fp16)   :    1.045 ms    8.22 TFLOPS  maxErr=1.11e-06  meanRelErr=9.16e-04
+------------------------------------------------------------
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   40.740 ms    0.84 TFLOPS
+  Stage 1 (Fused 1-thr/row):   72.722 ms    0.47 TFLOPS  maxErr=6.64e-09  meanRelErr=2.17e-06
+  Stage 2 (Tiled coop fp32):   63.936 ms    0.54 TFLOPS  maxErr=6.40e-09  meanRelErr=2.17e-06
+  Stage 3 (wmma TC fp16)   :    3.936 ms    8.73 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+------------------------------------------------------------
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :  164.751 ms    0.83 TFLOPS
+  Stage 1 (Fused 1-thr/row):  262.527 ms    0.52 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 2 (Tiled coop fp32):  255.037 ms    0.54 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 3 (wmma TC fp16)   :   15.611 ms    8.80 TFLOPS  maxErr=5.43e-07  meanRelErr=1.07e-03
+
+=== PyTorch SDPA Reference ===
+PyTorch not available — skipping
+
+=== Speedup: Stage 3 (wmma) vs Naive ===
+
+=== Key Nsight Metrics — Stage 3 wmma (N=4096) ===
+  ==ERROR== 'sm__throughput.avg_pct_of_peak_sustained_elapsed,' does not exist or is not an executable. Please make sure to specify the absolute path to 'sm__throughput.avg_pct_of_peak_sustained_elapsed,' if the executable is not in the local directory.
+
+=== Key Nsight Metrics — Stage 1 fused (N=4096) ===
+  ==ERROR== 'sm__throughput.avg_pct_of_peak_sustained_elapsed,' does not exist or is not an executable. Please make sure to specify the absolute path to 'sm__throughput.avg_pct_of_peak_sustained_elapsed,' if the executable is not in the local directory.
+
+============================================================
+  Files produced:
+    bench_cuda.log    — all 4 CUDA stages
+    bench_pytorch.log — PyTorch SDPA reference
+    profile_v3.log    — Nsight full report, Stage 3
+    profile_v1.log    — Nsight metrics,  Stage 1
+    summary.log       — this file
+============================================================
