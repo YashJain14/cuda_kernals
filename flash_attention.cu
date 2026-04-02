@@ -1211,6 +1211,7 @@ int main(int argc, char** argv) {
         //    - 8 warps (256 threads) vs 4 warps (128 threads)
         // ==========================================================
         {
+            float ms = 0.0f;
             float* d_O4;
             CUDA_CHECK(cudaMalloc(&d_O4, qkv_bytes));
             CUDA_CHECK(cudaMemset(d_O4, 0, qkv_bytes));
