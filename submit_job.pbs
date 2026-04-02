@@ -1,21 +1,166 @@
 #!/bin/bash
-#PBS -N sc4064_a1
+#PBS -N sc4064_flashattn
 #PBS -l select=1:ngpus=1
-#PBS -l walltime=00:10:00
+#PBS -l walltime=00:30:00
 #PBS -q normal
 #PBS -j oe
-#PBS -o output.log
+#PBS -o flash_run.log
 #PBS -P 52001004
 
-# Load required modules on ASPIRE 2A
+# ============================================================
+#  SC4064 FlashAttention — Full Benchmark + Comparison Job
+#  Produces:
+#    flash_run.log      — PBS stdout/stderr (this file)
+#    bench_cuda.log     — All 4 CUDA kernel stages
+#    bench_pytorch.log  — PyTorch SDPA reference numbers
+#    profile_v3.log     — Nsight Compute report for Stage 3 (wmma)
+#    profile_v1.log     — Nsight Compute report for Stage 1 (fused)
+#    summary.log        — Side-by-side comparison table
+# ============================================================
+
+set -e   # exit on any error
+cd "$PBS_O_WORKDIR"
+
+# ── 0. Print job info ──────────────────────────────────────────────────────────
+echo "============================================================"
+echo "  Job:        $PBS_JOBID"
+echo "  Node:       $(hostname)"
+echo "  Started:    $(date)"
+echo "  Working dir: $PBS_O_WORKDIR"
+echo "============================================================"
+
+# ── 1. Load modules ───────────────────────────────────────────────────────────
+module purge
 module load cuda/12.2.2
 
-# Navigate to the working directory
-cd $PBS_O_WORKDIR
+# Load Python + PyTorch if available on your cluster.
+# Adjust the module name to whatever ASPIRE 2A provides.
+# Common options: pytorch/2.x, python/3.11, anaconda3
+# If unavailable, the Python section will be skipped gracefully.
+module load python/3.11 2>/dev/null || true
+module load pytorch/2.1 2>/dev/null || true
 
-# Build all programs
+echo ""
+echo "--- Environment ---"
+nvcc --version | head -1
+python3 --version 2>/dev/null || echo "Python not available — skipping reference benchmark"
+nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader
+echo ""
+
+# ── 2. Build ──────────────────────────────────────────────────────────────────
+echo "--- Build ---"
 make clean
 make all
+echo "Build OK"
+echo ""
 
+# ── 3. CUDA kernel benchmark ──────────────────────────────────────────────────
+echo "--- Running CUDA benchmark (all 4 stages) ---"
+./flash_attn 2>&1 | tee bench_cuda.log
+echo ""
 
-./flash_attn
+# ── 4. PyTorch reference benchmark ───────────────────────────────────────────
+echo "--- Running PyTorch SDPA reference ---"
+if command -v python3 &>/dev/null && python3 -c "import torch" 2>/dev/null; then
+    python3 reference.py 2>&1 | tee bench_pytorch.log
+else
+    echo "PyTorch not available — skipping" | tee bench_pytorch.log
+fi
+echo ""
+
+# ── 5. Nsight Compute — Stage 3 (wmma Tensor Core kernel) ────────────────────
+# We profile only Stage 3 since that's our best kernel and the interesting one.
+# --target-processes all catches kernels launched from loops.
+# We skip 30 launches (warmup + N=1024 + N=2048 iterations) to land on N=4096.
+echo "--- Profiling Stage 3 (flash_wmma_v3) at N=4096 ---"
+ncu \
+    --kernel-name flash_wmma_v3 \
+    --launch-skip 20 \
+    --launch-count 1 \
+    --metrics \
+        gpu__time_duration.avg,\
+        sm__throughput.avg_pct_of_peak_sustained_elapsed,\
+        dram__bytes_read.sum,\
+        dram__bytes_write.sum,\
+        dram__throughput.avg_pct_of_peak_sustained_elapsed,\
+        sm__warps_active.avg_pct_of_peak_sustained_active,\
+        smsp__warp_issue_stalled_long_scoreboard_per_warp_active.pct,\
+        smsp__warp_issue_stalled_short_scoreboard_per_warp_active.pct,\
+        smsp__warp_issue_stalled_wait_per_warp_active.pct,\
+        l1tex__t_sectors_pipe_lsu_mem_global_op_ld.sum,\
+        l1tex__t_sectors_pipe_lsu_mem_global_op_st.sum,\
+        sm__sass_thread_inst_executed_op_ffma_pred_on.sum,\
+        sm__sass_thread_inst_executed_op_hfma_pred_on.sum \
+    ./flash_attn 2>&1 | tee profile_v3.log
+echo ""
+
+# ── 6. Nsight Compute — Stage 1 (fused v1, for comparison) ───────────────────
+echo "--- Profiling Stage 1 (flash_fused_v1) at N=4096 ---"
+ncu \
+    --kernel-name flash_fused_v1 \
+    --launch-skip 20 \
+    --launch-count 1 \
+    --metrics \
+        gpu__time_duration.avg,\
+        sm__throughput.avg_pct_of_peak_sustained_elapsed,\
+        dram__bytes_read.sum,\
+        dram__bytes_write.sum,\
+        dram__throughput.avg_pct_of_peak_sustained_elapsed,\
+        sm__warps_active.avg_pct_of_peak_sustained_active,\
+        smsp__warp_issue_stalled_long_scoreboard_per_warp_active.pct,\
+        smsp__warp_issue_stalled_short_scoreboard_per_warp_active.pct \
+    ./flash_attn 2>&1 | tee profile_v1.log
+echo ""
+
+# ── 7. Generate summary comparison table ─────────────────────────────────────
+echo "--- Generating summary ---"
+{
+echo "============================================================"
+echo "  SC4064 FlashAttention — Results Summary"
+echo "  $(date)"
+echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
+echo "============================================================"
+echo ""
+echo "=== CUDA Kernel Stages ==="
+grep -E "(Stage|TFLOPS|----)" bench_cuda.log || true
+echo ""
+echo "=== PyTorch SDPA Reference ==="
+grep -v "^$" bench_pytorch.log || true
+echo ""
+echo "=== Speedup: Stage 3 (wmma) vs Naive ==="
+# Pull timing numbers and compute ratio
+S0_4096=$(grep -A5 "N = 4096" bench_cuda.log | grep "Stage 0" | grep -oP '[\d.]+(?= ms)' | head -1)
+S3_4096=$(grep -A5 "N = 4096" bench_cuda.log | grep "Stage 3" | grep -oP '[\d.]+(?= ms)' | head -1)
+PT_4096=$(grep "N= 4096\|N=4096" bench_pytorch.log | grep -oP '[\d.]+(?= ms)' | head -1)
+
+if [ -n "$S0_4096" ] && [ -n "$S3_4096" ]; then
+    echo "  N=4096  Stage 0: ${S0_4096} ms"
+    echo "  N=4096  Stage 3: ${S3_4096} ms"
+    python3 -c "print(f'  Speedup Stage3 vs Stage0: {float(\"$S0_4096\")/float(\"$S3_4096\"):.1f}x')" 2>/dev/null || \
+        echo "  (install python to auto-compute speedup)"
+fi
+if [ -n "$PT_4096" ] && [ -n "$S3_4096" ]; then
+    echo "  N=4096  PyTorch SDPA: ${PT_4096} ms"
+    python3 -c "print(f'  Stage3 vs PyTorch: {float(\"$S3_4096\")/float(\"$PT_4096\"):.1f}x slower')" 2>/dev/null || true
+fi
+echo ""
+echo "=== Key Nsight Metrics — Stage 3 wmma (N=4096) ==="
+grep -E "(dram__throughput|sm__throughput|smsp__warp_issue_stalled_long|smsp__warp_issue_stalled_short|sm__warps_active)" profile_v3.log | \
+    sed 's/^[[:space:]]*/  /' || echo "  (see profile_v3.log)"
+echo ""
+echo "=== Key Nsight Metrics — Stage 1 fused (N=4096) ==="
+grep -E "(dram__throughput|sm__throughput|smsp__warp_issue_stalled_long|smsp__warp_issue_stalled_short)" profile_v1.log | \
+    sed 's/^[[:space:]]*/  /' || echo "  (see profile_v1.log)"
+echo ""
+echo "============================================================"
+echo "  Files produced:"
+echo "    bench_cuda.log    — all 4 CUDA stages"
+echo "    bench_pytorch.log — PyTorch SDPA reference"
+echo "    profile_v3.log    — Nsight full report, Stage 3"
+echo "    profile_v1.log    — Nsight metrics,  Stage 1"
+echo "    summary.log       — this file"
+echo "============================================================"
+} | tee summary.log
+
+echo ""
+echo "Job finished: $(date)"
