@@ -1,0 +1,32 @@
+============================================================
+  Job:         13473864.pbs101
+  Node:        x1000c2s7b0n0
+  Started:     Fri Apr  3 15:34:50 +08 2026
+  Working dir: /home/users/ntu/yash012/cuda_kernals
+  Log dir:     logs
+============================================================
+
+--- Environment ---
+nvcc: NVIDIA (R) Cuda compiler driver
+NVIDIA A100-SXM4-40GB, 40960 MiB
+
+Python:  Python 3.11.15
+PyTorch: 2.5.1+cu121
+
+--- Build ---
+rm -f flash_attn cublas_ref
+nvcc -O3 -arch=sm_80 --use_fast_math -Xcompiler -Wall flash_attention.cu -o flash_attn
+flash_attention.cu(491): error: identifier "d" is undefined
+              sK[i] = (gr < N) ? K[offset + gr * d + c] : __float2half(0.0f);
+                                                 ^
+
+flash_attention.cu(491): error: ambiguous "?" operation: second operand of type "<error-type>" can be converted to third operand type "__half", and vice versa
+              sK[i] = (gr < N) ? K[offset + gr * d + c] : __float2half(0.0f);
+                                                        ^
+
+flash_attention.cu(492): error: ambiguous "?" operation: second operand of type "<error-type>" can be converted to third operand type "__half", and vice versa
+              sV[i] = (gr < N) ? V[offset + gr * d + c] : __float2half(0.0f);
+                                                        ^
+
+3 errors detected in the compilation of "flash_attention.cu".
+make: *** [Makefile:15: flash_attn] Error 2

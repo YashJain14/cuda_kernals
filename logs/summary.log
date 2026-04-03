@@ -1,0 +1,42 @@
+============================================================
+  SC4064 FlashAttention — Results Summary
+  Fri Apr  3 15:38:54 +08 2026
+  GPU: NVIDIA A100-SXM4-40GB
+============================================================
+
+=== CUDA Kernel Stages (N=4096) ===
+    Stage 0 (Naive 3-kernel) :  164.800 ms    0.83 TFLOPS
+    Stage 1 (Fused 1-thr/row):  262.524 ms    0.52 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+    Stage 2 (Tiled coop fp32):  255.458 ms    0.54 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+    Stage 3 (wmma TC fp16)   :   15.646 ms    8.78 TFLOPS  maxErr=5.43e-07  meanRelErr=1.07e-03
+    Stage 4 (wmma 64x64)     :   13.841 ms    9.93 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+    Stage 5 (FA-2 deferred l):   13.843 ms    9.93 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+    Stage 6 (async dbl-buf):   13.231 ms   10.39 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+    Stage 7 (Smem Padded)   :    4.710 ms   29.18 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+
+=== cuBLAS Tensor Core Ceiling ===
+      Both GEMMs (ceiling) :    1.953 ms   70.37 TFLOPS  <-- target
+
+=== PyTorch FlashAttention-2 Reference (fp16) ===
+    N= 4096     1.010 ms  136.03 TFLOPS
+
+=== Speedup Table (N=4096) ===
+  Stage 0 (Naive):              164.800 ms   0.83 TFLOPS
+  Stage 1 (Fused):              262.524 ms   0.52 TFLOPS
+  Stage 2 (Tiled):              255.458 ms   0.54 TFLOPS
+  Stage 3 (wmma 32x32):          15.646 ms   8.78 TFLOPS
+  Stage 4 (wmma 64x64):          13.841 ms   9.93 TFLOPS
+  Stage 5 (FA-2 deferred):       13.843 ms   9.93 TFLOPS
+  Stage 6 (async dbl-buf):       13.231 ms   10.39 TFLOPS
+  Stage 7 (Smem Padded):          4.710 ms   29.18 TFLOPS
+  PyTorch SDPA fp16:              1.010 ms   136.03 TFLOPS
+  cuBLAS ceiling:                   — ms   70.37 TFLOPS
+
+  Stage 7 vs Naive:      35.0x faster
+  Stage 7 vs Stage 6:    2.81x faster
+  Stage 7 vs PyTorch:    4.7x slower  (21.4% of FA-2)
+  Stage 7 TC efficiency: 41.5% of cuBLAS ceiling
+
+=== Nsight Systems — GPU Kernel Summary ===
+
+============================================================
