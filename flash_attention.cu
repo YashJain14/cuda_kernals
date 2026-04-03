@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <math.h>
 #include <float.h>
+#include <stdint.h>
 
 using namespace nvcuda;
 
@@ -56,6 +57,22 @@ using namespace nvcuda;
 #define S45_BR  64
 #define S45_BC  64
 #define S45_BLK 256
+
+// ── cp.async intrinsics for sm_80 ──────────────────────────
+__device__ __forceinline__ void cp_async_16(void* smem, const void* gmem) {
+    uint32_t addr = static_cast<uint32_t>(__cvta_generic_to_shared(smem));
+    asm volatile("cp.async.cg.shared.global [%0], [%1], 16;\n"
+                 :: "r"(addr), "l"(gmem));
+}
+__device__ __forceinline__ void cp_async_commit() {
+    asm volatile("cp.async.commit_group;\n");
+}
+__device__ __forceinline__ void cp_async_wait_all() {
+    asm volatile("cp.async.wait_group 0;\n" ::: "memory");
+}
+__device__ __forceinline__ void cp_async_wait_one_pending() {
+    asm volatile("cp.async.wait_group 1;\n" ::: "memory");
+}
 
 
 // ============================================================
@@ -942,6 +959,237 @@ void launch_flash_v5(const half* d_Q, const half* d_K, const half* d_V,
     CUDA_CHECK(cudaFuncSetAttribute(flash_wmma_v5,
         cudaFuncAttributeMaxDynamicSharedMemorySize, 68000));
     flash_wmma_v5<<<grid, block, smem>>>(d_Q, d_K, d_V, d_O, N,
+        1.0f / sqrtf((float)HEAD_DIM));
+}
+
+// ============================================================
+//  STAGE 6: Double-Buffered Async Pipeline + FA-2
+//
+//  Over Stage 5:
+//  - cp.async: prefetch next KV tile while computing current
+//    tile's GEMMs + softmax → hides global memory latency
+//  - 16-byte async copies (vectorized, 8 halfs per op)
+//  - FA-2 deferred division
+//
+//  Shared memory layout (~80.5 KB, fits A100's 164 KB):
+//    sQ      [BR * D]       half     =  8 KB
+//    sK_db   [2 * BC * D]   half     = 16 KB   ← double buffer
+//    sV_db   [2 * BC * D]   half     = 16 KB   ← double buffer
+//    sP      [BR * BC]      half     =  8 KB
+//    sS      [BR * BC]      float    = 16 KB
+//    sO      [BR * D]       float    = 16 KB
+//    row_m, row_l [BR]      float    =  0.5 KB
+// ============================================================
+
+__global__ void flash_wmma_v6(const half* __restrict__ Q,
+                              const half* __restrict__ K,
+                              const half* __restrict__ V,
+                              float* __restrict__ O,
+                              int N, float scale) {
+    const int BR = S45_BR, BC = S45_BC, D = HEAD_DIM;
+    int bh = blockIdx.y, q_tile = blockIdx.x;
+    int q_start = q_tile * BR;
+    if (q_start >= N) return;
+
+    int tid = threadIdx.x, warp_id = tid / 32;
+    int offset = bh * N * D;
+    int wr = warp_id / 2;   // 0..3
+    int wc = warp_id % 2;   // 0..1
+
+    // ── Shared memory ──
+    extern __shared__ char smem_raw[];
+    half*  sQ     = (half*)smem_raw;
+    half*  sK_db  = sQ    + BR * D;             // double-buffered K
+    half*  sV_db  = sK_db + 2 * BC * D;         // double-buffered V
+    half*  sP     = sV_db + 2 * BC * D;
+    float* sS     = (float*)(sP + BR * BC);
+    float* sO     = sS    + BR * BC;
+    float* row_m  = sO    + BR * D;
+    float* row_l  = row_m + BR;
+
+    // ── Init ──
+    for (int i = tid; i < BR * D; i += S45_BLK) sO[i] = 0.0f;
+    if (tid < BR) { row_m[tid] = -INFINITY; row_l[tid] = 0.0f; }
+    for (int i = tid; i < BR * D; i += S45_BLK) {
+        int r = i / D, c = i % D, gr = q_start + r;
+        sQ[i] = (gr < N) ? Q[offset + gr*D + c] : __float2half(0.0f);
+    }
+
+    int Tc = (N + BC - 1) / BC;
+    const int CHUNK = 8;                      // 16 bytes = 8 halfs
+    int chunks = (BC * D) / CHUNK;            // 512
+
+    // ── Prefetch tile 0 → buf[0] ──
+    {
+        half* sK0 = sK_db;
+        half* sV0 = sV_db;
+        for (int i = tid; i < chunks; i += S45_BLK) {
+            int elem = i * CHUNK;
+            int r = elem / D, c = elem % D, gr = r;
+            if (gr < N) {
+                cp_async_16(&sK0[elem], &K[offset + gr*D + c]);
+                cp_async_16(&sV0[elem], &V[offset + gr*D + c]);
+            } else {
+                *reinterpret_cast<float4*>(&sK0[elem]) = make_float4(0,0,0,0);
+                *reinterpret_cast<float4*>(&sV0[elem]) = make_float4(0,0,0,0);
+            }
+        }
+        cp_async_commit();
+    }
+
+    // ── Main loop ──
+    for (int j = 0; j < Tc; j++) {
+        int cur = j & 1;
+        int nxt = 1 - cur;
+        half* sK = sK_db + cur * BC * D;
+        half* sV = sV_db + cur * BC * D;
+        int kv_start = j * BC;
+
+        // ── Prefetch NEXT tile → buf[nxt] (overlaps with compute) ──
+        if (j + 1 < Tc) {
+            int next_kv = (j + 1) * BC;
+            half* sK_n = sK_db + nxt * BC * D;
+            half* sV_n = sV_db + nxt * BC * D;
+            for (int i = tid; i < chunks; i += S45_BLK) {
+                int elem = i * CHUNK;
+                int r = elem / D, c = elem % D, gr = next_kv + r;
+                if (gr < N) {
+                    cp_async_16(&sK_n[elem], &K[offset + gr*D + c]);
+                    cp_async_16(&sV_n[elem], &V[offset + gr*D + c]);
+                } else {
+                    *reinterpret_cast<float4*>(&sK_n[elem]) = make_float4(0,0,0,0);
+                    *reinterpret_cast<float4*>(&sV_n[elem]) = make_float4(0,0,0,0);
+                }
+            }
+            cp_async_commit();
+            cp_async_wait_one_pending();   // wait for buf[cur], let buf[nxt] fly
+        } else {
+            cp_async_wait_all();
+        }
+        __syncthreads();
+
+        // ── GEMM-I: S = Q @ K^T ──
+        {
+            wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K,
+                           half, wmma::row_major> q_frag;
+            wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K,
+                           half, wmma::col_major> k_frag[2];
+            wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K,
+                           float> s_frag[2];
+            wmma::fill_fragment(s_frag[0], 0.0f);
+            wmma::fill_fragment(s_frag[1], 0.0f);
+            for (int kk = 0; kk < D / WMMA_K; kk++) {
+                wmma::load_matrix_sync(q_frag,
+                    &sQ[wr*WMMA_M*D + kk*WMMA_K], D);
+                wmma::load_matrix_sync(k_frag[0],
+                    &sK[(wc*2+0)*WMMA_N*D + kk*WMMA_K], D);
+                wmma::load_matrix_sync(k_frag[1],
+                    &sK[(wc*2+1)*WMMA_N*D + kk*WMMA_K], D);
+                wmma::mma_sync(s_frag[0], q_frag, k_frag[0], s_frag[0]);
+                wmma::mma_sync(s_frag[1], q_frag, k_frag[1], s_frag[1]);
+            }
+            for (int f = 0; f < 2; f++) {
+                for (int e = 0; e < s_frag[f].num_elements; e++)
+                    s_frag[f].x[e] *= scale;
+                wmma::store_matrix_sync(
+                    &sS[wr*WMMA_M*BC + (wc*2+f)*WMMA_N],
+                    s_frag[f], BC, wmma::mem_row_major);
+            }
+        }
+        __syncthreads();
+
+        // ── FA-2 Online softmax (deferred division) ──
+        {
+            int my_row = tid / 4, my_lane = tid % 4;
+            int c_start = my_lane * (BC/4), c_end = c_start + (BC/4);
+
+            float lmax = -INFINITY;
+            for (int c = c_start; c < c_end; c++)
+                if (kv_start + c < N)
+                    lmax = fmaxf(lmax, sS[my_row*BC + c]);
+            lmax = fmaxf(lmax, __shfl_xor_sync(0xffffffff, lmax, 1));
+            lmax = fmaxf(lmax, __shfl_xor_sync(0xffffffff, lmax, 2));
+
+            float m_old = row_m[my_row];
+            float m_new = fmaxf(m_old, lmax);
+            float corr  = __expf(m_old - m_new);
+
+            if (my_lane == 0) {
+                row_l[my_row] = corr * row_l[my_row];
+                row_m[my_row] = m_new;
+            }
+            for (int c = my_lane; c < D; c += 4)
+                sO[my_row*D + c] *= corr;
+
+            float lsum = 0.0f;
+            for (int c = c_start; c < c_end; c++) {
+                float p = (kv_start + c < N)
+                        ? __expf(sS[my_row*BC + c] - m_new) : 0.0f;
+                sP[my_row*BC + c] = __float2half(p);
+                lsum += p;
+            }
+            lsum += __shfl_xor_sync(0xffffffff, lsum, 1);
+            lsum += __shfl_xor_sync(0xffffffff, lsum, 2);
+            if (my_lane == 0) row_l[my_row] += lsum;
+        }
+        __syncthreads();
+
+        // ── GEMM-II: O_raw += P @ V ──
+        {
+            wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K,
+                           half, wmma::row_major> p_frag;
+            wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K,
+                           half, wmma::row_major> v_frag[2];
+            wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K,
+                           float> o_frag[2];
+            wmma::load_matrix_sync(o_frag[0],
+                &sO[wr*WMMA_M*D + (wc*2+0)*WMMA_N], D, wmma::mem_row_major);
+            wmma::load_matrix_sync(o_frag[1],
+                &sO[wr*WMMA_M*D + (wc*2+1)*WMMA_N], D, wmma::mem_row_major);
+            for (int kk = 0; kk < BC / WMMA_K; kk++) {
+                wmma::load_matrix_sync(p_frag,
+                    &sP[wr*WMMA_M*BC + kk*WMMA_K], BC);
+                wmma::load_matrix_sync(v_frag[0],
+                    &sV[kk*WMMA_K*D + (wc*2+0)*WMMA_N], D);
+                wmma::load_matrix_sync(v_frag[1],
+                    &sV[kk*WMMA_K*D + (wc*2+1)*WMMA_N], D);
+                wmma::mma_sync(o_frag[0], p_frag, v_frag[0], o_frag[0]);
+                wmma::mma_sync(o_frag[1], p_frag, v_frag[1], o_frag[1]);
+            }
+            wmma::store_matrix_sync(
+                &sO[wr*WMMA_M*D + (wc*2+0)*WMMA_N],
+                o_frag[0], D, wmma::mem_row_major);
+            wmma::store_matrix_sync(
+                &sO[wr*WMMA_M*D + (wc*2+1)*WMMA_N],
+                o_frag[1], D, wmma::mem_row_major);
+        }
+        __syncthreads();
+    }
+
+    // ── Final: O = O_raw / l ──
+    for (int i = tid; i < BR * D; i += S45_BLK) {
+        int r = i / D, c = i % D, gr = q_start + r;
+        if (gr < N) O[offset + gr*D + c] = sO[i] / row_l[r];
+    }
+}
+
+void launch_flash_v6(const half* d_Q, const half* d_K, const half* d_V,
+                     float* d_O, int B_nh, int N) {
+    dim3 grid((N + S45_BR - 1) / S45_BR, B_nh);
+    dim3 block(S45_BLK);
+
+    // sQ + 2*sK + 2*sV + sP (half) + sS + sO + row_m + row_l (float)
+    size_t smem = (size_t)(S45_BR * HEAD_DIM
+                         + 2 * S45_BC * HEAD_DIM
+                         + 2 * S45_BC * HEAD_DIM
+                         + S45_BR * S45_BC) * sizeof(half)
+               + (size_t)(S45_BR * S45_BC
+                         + S45_BR * HEAD_DIM
+                         + S45_BR + S45_BR) * sizeof(float);
+
+    CUDA_CHECK(cudaFuncSetAttribute(flash_wmma_v6,
+        cudaFuncAttributeMaxDynamicSharedMemorySize, 84000));
+    flash_wmma_v6<<<grid, block, smem>>>(d_Q, d_K, d_V, d_O, N,
         1.0f / sqrtf((float)HEAD_DIM));
 }
 
