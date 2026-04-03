@@ -1,28 +1,168 @@
+#!/bin/bash
+#PBS -N sc4064_flashattn
+#PBS -l select=1:ngpus=1
+#PBS -l walltime=00:45:00
+#PBS -q normal
+#PBS -j oe
+#PBS -o job_output.log
+#PBS -P 52001004
+
 # ============================================================
-#  Makefile — SC4064 FlashAttention
-#  Targets A100 (sm_80). Builds flash_attn and cublas_ref.
+#  SC4064 FlashAttention — Full Benchmark Job
 # ============================================================
 
-NVCC     = nvcc
-CFLAGS   = -O3 -arch=sm_80 --use_fast_math -Xcompiler -Wall
-LDFLAGS  = -lcublas
+set -e
+cd "$PBS_O_WORKDIR"
 
-.PHONY: all clean run ref
+# ── Setup Logs ────────────────────────────────────────────────────────────────
+LOG_DIR="logs"
+mkdir -p "$LOG_DIR"
+# Clean old logs from previous runs (safely)
+rm -f "$LOG_DIR"/*.log "$LOG_DIR"/*.nsys-rep "$LOG_DIR"/*.sqlite "$LOG_DIR"/*.txt
 
-all: flash_attn cublas_ref
+echo "============================================================"
+echo "  Job:         $PBS_JOBID"
+echo "  Node:        $(hostname)"
+echo "  Started:     $(date)"
+echo "  Working dir: $PBS_O_WORKDIR"
+echo "  Log dir:     $LOG_DIR"
+echo "============================================================"
+echo ""
 
-flash_attn: flash_attention.cu
-	$(NVCC) $(CFLAGS) $< -o $@
+# ── Modules ───────────────────────────────────────────────────────────────────
+module purge
+module load cuda/12.2.2
 
-cublas_ref: cublas_ref.cu
-	$(NVCC) $(CFLAGS) $< $(LDFLAGS) -o $@
+echo "--- Environment ---"
+nvcc --version | head -1
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+echo ""
 
-run: flash_attn cublas_ref
-	./flash_attn
-	./cublas_ref
+# ── Conda ─────────────────────────────────────────────────────────────────────
+CONDA_DIR="$HOME/miniconda3"
+source "$CONDA_DIR/etc/profile.d/conda.sh"
+conda activate sc4064
+echo "Python:  $(python3 --version)"
+echo "PyTorch: $(python3 -c 'import torch; print(torch.__version__)' 2>/dev/null || echo 'not found')"
+echo ""
 
-ref: reference.py
-	python3 reference.py
+# ── Build ─────────────────────────────────────────────────────────────────────
+echo "--- Build ---"
+make clean
+make all
+echo "Build OK"
+echo ""
 
-clean:
-	rm -f flash_attn cublas_ref
+# ── CUDA benchmark ────────────────────────────────────────────────────────────
+echo "--- CUDA benchmark: Stages 0-6 ---"
+./flash_attn 2>&1 | tee "$LOG_DIR/bench_cuda.log"
+echo ""
+
+# ── cuBLAS ceiling ────────────────────────────────────────────────────────────
+echo "--- cuBLAS Tensor Core ceiling ---"
+./cublas_ref 2>&1 | tee "$LOG_DIR/bench_cublas.log"
+echo ""
+
+# ── PyTorch reference ─────────────────────────────────────────────────────────
+echo "--- PyTorch SDPA reference ---"
+python3 reference.py 2>&1 | tee "$LOG_DIR/bench_pytorch.log"
+echo ""
+
+# ── Nsight Systems profiling ──────────────────────────────────────────────────
+echo "--- Nsight Systems profiling ---"
+if command -v nsys &>/dev/null; then
+    nsys profile \
+        --output "$LOG_DIR/profile_stages" \
+        --force-overwrite true \
+        --trace cuda,nvtx \
+        --stats true \
+        ./flash_attn > "$LOG_DIR/profile_stages_stdout.log" 2>&1
+    echo "nsys profile complete — see $LOG_DIR/profile_stages.nsys-rep"
+else
+    echo "nsys not in PATH — skipping"
+fi
+echo ""
+
+# ── Summary ───────────────────────────────────────────────────────────────────
+echo "--- Generating summary ---"
+{
+echo "============================================================"
+echo "  SC4064 FlashAttention — Results Summary"
+echo "  $(date)"
+echo "  GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader | head -1)"
+echo "============================================================"
+echo ""
+
+echo "=== CUDA Kernel Stages (N=4096) ==="
+awk '/N = 4096/{p=1} p && /Stage/{print "  "$0} p && /^$/{p=0}' "$LOG_DIR/bench_cuda.log"
+echo ""
+
+echo "=== cuBLAS Tensor Core Ceiling ==="
+awk '/N = 4096/{p=1} p && /ceiling/{print "  "$0; exit}' "$LOG_DIR/bench_cublas.log"
+echo ""
+
+echo "=== PyTorch FlashAttention-2 Reference (fp16) ==="
+awk '/dtype = fp16/{p=1} p && /N= *4096/{print "  "$0; exit}' "$LOG_DIR/bench_pytorch.log"
+echo ""
+
+echo "=== Speedup Table (N=4096) ==="
+# Robust extraction from logs/
+S0=$(awk '/N = 4096/{p=1} p && /Stage 0/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_cuda.log")
+S1=$(awk '/N = 4096/{p=1} p && /Stage 1/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_cuda.log")
+S2=$(awk '/N = 4096/{p=1} p && /Stage 2/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_cuda.log")
+S3=$(awk '/N = 4096/{p=1} p && /Stage 3/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_cuda.log")
+S4=$(awk '/N = 4096/{p=1} p && /Stage 4/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_cuda.log")
+S5=$(awk '/N = 4096/{p=1} p && /Stage 5/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_cuda.log")
+S6=$(awk '/N = 4096/{p=1} p && /Stage 6/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_cuda.log")
+
+T0=$(awk '/N = 4096/{p=1} p && /Stage 0/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
+T1=$(awk '/N = 4096/{p=1} p && /Stage 1/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
+T2=$(awk '/N = 4096/{p=1} p && /Stage 2/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
+T3=$(awk '/N = 4096/{p=1} p && /Stage 3/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
+T4=$(awk '/N = 4096/{p=1} p && /Stage 4/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
+T5=$(awk '/N = 4096/{p=1} p && /Stage 5/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
+T6=$(awk '/N = 4096/{p=1} p && /Stage 6/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
+
+PT=$(awk '/dtype = fp16/{p=1} p && /N= *4096/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_pytorch.log")
+PT_T=$(awk '/dtype = fp16/{p=1} p && /N= *4096/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_pytorch.log")
+CB=$(awk '/N = 4096/{p=1} p && /ceiling/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cublas.log")
+
+printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 0 (Naive):"          "${S0:----}"  "${T0:----}"
+printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 1 (Fused):"          "${S1:----}"  "${T1:----}"
+printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 2 (Tiled):"          "${S2:----}"  "${T2:----}"
+printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 3 (wmma 32x32):"     "${S3:----}"  "${T3:----}"
+printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 4 (wmma 64x64):"     "${S4:----}"  "${T4:----}"
+printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 5 (FA-2 deferred):"  "${S5:----}"  "${T5:----}"
+printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 6 (async dbl-buf):"  "${S6:----}"  "${T6:----}"
+printf "  %-28s %8s ms   %s TFLOPS\n" "PyTorch SDPA fp16:"        "${PT:----}"  "${PT_T:----}"
+printf "  %-28s %8s ms   %s TFLOPS\n" "cuBLAS ceiling:"           "—"           "${CB:----}"
+echo ""
+
+[ -n "$S0" ] && [ -n "$S6" ] && [ "$S6" != "0" ] && \
+    awk -v a="$S0" -v b="$S6" \
+        'BEGIN{printf "  Stage 6 vs Naive:      %.1fx faster\n", a/b}'
+[ -n "$S4" ] && [ -n "$S6" ] && [ "$S6" != "0" ] && \
+    awk -v a="$S4" -v b="$S6" \
+        'BEGIN{printf "  Stage 6 vs Stage 4:    %.2fx faster\n", a/b}'
+[ -n "$S6" ] && [ -n "$PT" ] && [ "$PT" != "0" ] && \
+    awk -v s="$S6" -v p="$PT" \
+        'BEGIN{printf "  Stage 6 vs PyTorch:    %.1fx slower  (%.1f%% of FA-2)\n", s/p, p/s*100}'
+[ -n "$T6" ] && [ -n "$CB" ] && [ "$CB" != "0" ] && \
+    awk -v t="$T6" -v c="$CB" \
+        'BEGIN{printf "  Stage 6 TC efficiency: %.1f%% of cuBLAS ceiling\n", t/c*100}'
+echo ""
+
+echo "=== Nsight Systems — GPU Kernel Summary ==="
+if [ -f "$LOG_DIR/profile_stages_stdout.log" ]; then
+    grep -A 40 "CUDA Kernel Statistics\|Time(%)" "$LOG_DIR/profile_stages_stdout.log" 2>/dev/null \
+        | head -30 | sed 's/^/  /'
+fi
+echo ""
+
+echo "============================================================"
+} | tee "$LOG_DIR/summary.log"
+
+echo ""
+echo "Job finished: $(date)"
+# Final cleanup: move the PBS output log into the logs folder
+mv job_output.log "$LOG_DIR/job_output.log"
