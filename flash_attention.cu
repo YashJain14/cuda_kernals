@@ -488,8 +488,8 @@ __global__ void flash_wmma_v3(const half* __restrict__ Q,
         for (int i = tid; i < BC * D; i += S3_BLK) {
             int r = i / D, c = i % D;
             int gr = kv_start + r;
-            sK[i] = (gr < N) ? K[offset + gr * D + c] : __float2half(0.0f);
-            sV[i] = (gr < N) ? V[offset + gr * D + c] : __float2half(0.0f);
+            sK[i] = (gr < N) ? K[offset + gr * d + c] : __float2half(0.0f);
+            sV[i] = (gr < N) ? V[offset + gr * d + c] : __float2half(0.0f);
         }
         __syncthreads();
 
@@ -1261,6 +1261,9 @@ __global__ void flash_wmma_v7(const half* __restrict__ Q,
             if (r < N) {
                 cp_async_16(&sK0[r * D_PAD + c], &K[offset + r * D + c]);
                 cp_async_16(&sV0[r * D_PAD + c], &V[offset + r * D + c]);
+            } else {
+                *reinterpret_cast<float4*>(&sK0[r * D_PAD + c]) = make_float4(0,0,0,0);
+                *reinterpret_cast<float4*>(&sV0[r * D_PAD + c]) = make_float4(0,0,0,0);
             }
         }
         cp_async_commit();
@@ -1369,7 +1372,8 @@ void launch_flash_v7(const half* d_Q, const half* d_K, const half* d_V,
                      float* d_O, int B_nh, int N) {
     dim3 grid((N + S7_BR - 1) / S7_BR, B_nh);
     dim3 block(S45_BLK);
-    size_t smem = (size_t)(S7_BR * S7_D_PAD + 2 * S7_BC * S7_D_PAD + S7_BR * S7_BC_PAD) * sizeof(half)
+    // Corrected Smem calculation: sQ + 2*sK + 2*sV + sP (half) + sS + sO + m + l (float)
+    size_t smem = (size_t)(S7_BR * S7_D_PAD + 2 * S7_BC * S7_D_PAD + 2 * S7_BC * S7_D_PAD + S7_BR * S7_BC_PAD) * sizeof(half)
                + (size_t)(S7_BR * S7_BC_PAD + S7_BR * S7_D_PAD + S7_BR + S7_BR) * sizeof(float);
     CUDA_CHECK(cudaFuncSetAttribute(flash_wmma_v7, cudaFuncAttributeMaxDynamicSharedMemorySize, 98304));
     flash_wmma_v7<<<grid, block, smem>>>(d_Q, d_K, d_V, d_O, N, 1.0f / sqrtf((float)HEAD_DIM));
