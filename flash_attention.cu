@@ -1193,6 +1193,188 @@ void launch_flash_v6(const half* d_Q, const half* d_K, const half* d_V,
         1.0f / sqrtf((float)HEAD_DIM));
 }
 
+// ============================================================
+//  STAGE 7: Optimized Smem Layout — Padding & Bank Conflict Fix
+//
+//  Over Stage 6:
+//  - Shared memory padding: Rows are padded to 72 elements (instead of 64).
+//    144 bytes / 4 = 36 banks. This shifts row start banks by 4,
+//    drastically reducing bank conflicts in wmma loads.
+//  - Optimized vectorized stores for sP.
+// ============================================================
+
+#define S7_BR 64
+#define S7_BC 64
+#define S7_D  HEAD_DIM
+#define S7_D_PAD 72
+#define S7_BC_PAD 72
+
+__global__ void flash_wmma_v7(const half* __restrict__ Q,
+                              const half* __restrict__ K,
+                              const half* __restrict__ V,
+                              float* __restrict__ O,
+                              int N, float scale) {
+    const int BR = S7_BR, BC = S7_BC, D = S7_D;
+    const int D_PAD = S7_D_PAD;
+    const int BC_PAD = S7_BC_PAD;
+
+    int bh = blockIdx.y, q_tile = blockIdx.x;
+    int q_start = q_tile * BR;
+    if (q_start >= N) return;
+
+    int tid = threadIdx.x, warp_id = tid / 32;
+    int offset = bh * N * D;
+    int wr = warp_id / 2;
+    int wc = warp_id % 2;
+
+    extern __shared__ char smem_raw[];
+    half*  sQ     = (half*)smem_raw;
+    half*  sK_db  = sQ    + BR * D_PAD;
+    half*  sV_db  = sK_db + 2 * BC * D_PAD;
+    half*  sP     = sV_db + 2 * BC * D_PAD;
+    float* sS     = (float*)(sP + BR * BC_PAD);
+    float* sO     = sS    + BR * BC_PAD;
+    float* row_m  = sO    + BR * D_PAD;
+    float* row_l  = row_m + BR;
+
+    // Init O and row stats
+    for (int i = tid; i < BR * D_PAD; i += S45_BLK) sO[i] = 0.0f;
+    if (tid < BR) { row_m[tid] = -INFINITY; row_l[tid] = 0.0f; }
+
+    // Load Q with padding
+    for (int i = tid; i < BR * D; i += S45_BLK) {
+        int r = i / D, c = i % D, gr = q_start + r;
+        sQ[r * D_PAD + c] = (gr < N) ? Q[offset + gr * D + c] : __float2half(0.0f);
+    }
+
+    int Tc = (N + BC - 1) / BC;
+    const int CHUNK = 8;
+    int chunks_per_tile = (BC * D) / CHUNK;
+
+    // Prefetch tile 0
+    {
+        half* sK0 = sK_db;
+        half* sV0 = sV_db;
+        for (int i = tid; i < chunks_per_tile; i += S45_BLK) {
+            int elem = i * CHUNK;
+            int r = elem / D, c = elem % D;
+            if (r < N) {
+                cp_async_16(&sK0[r * D_PAD + c], &K[offset + r * D + c]);
+                cp_async_16(&sV0[r * D_PAD + c], &V[offset + r * D + c]);
+            }
+        }
+        cp_async_commit();
+    }
+
+    for (int j = 0; j < Tc; j++) {
+        int cur = j & 1, nxt = 1 - cur;
+        half* sK = sK_db + cur * BC * D_PAD;
+        half* sV = sV_db + cur * BC * D_PAD;
+        int kv_start = j * BC;
+
+        if (j + 1 < Tc) {
+            int next_kv = (j + 1) * BC;
+            half* sK_n = sK_db + nxt * BC * D_PAD;
+            half* sV_n = sV_db + nxt * BC * D_PAD;
+            for (int i = tid; i < chunks_per_tile; i += S45_BLK) {
+                int elem = i * CHUNK;
+                int r = elem / D, c = elem % D, gr = next_kv + r;
+                if (gr < N) {
+                    cp_async_16(&sK_n[r * D_PAD + c], &K[offset + gr * D + c]);
+                    cp_async_16(&sV_n[r * D_PAD + c], &V[offset + gr * D + c]);
+                } else {
+                    *reinterpret_cast<float4*>(&sK_n[r * D_PAD + c]) = make_float4(0,0,0,0);
+                    *reinterpret_cast<float4*>(&sV_n[r * D_PAD + c]) = make_float4(0,0,0,0);
+                }
+            }
+            cp_async_commit();
+            cp_async_wait_one_pending();
+        } else {
+            cp_async_wait_all();
+        }
+        __syncthreads();
+
+        // GEMM-I: S = Q @ K^T (Padded strides)
+        {
+            wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> q_frag;
+            wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> k_frag[2];
+            wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> s_frag[2];
+            wmma::fill_fragment(s_frag[0], 0.0f); wmma::fill_fragment(s_frag[1], 0.0f);
+            for (int kk = 0; kk < D / WMMA_K; kk++) {
+                wmma::load_matrix_sync(q_frag, &sQ[wr*WMMA_M*D_PAD + kk*WMMA_K], D_PAD);
+                wmma::load_matrix_sync(k_frag[0], &sK[(wc*2+0)*WMMA_N*D_PAD + kk*WMMA_K], D_PAD);
+                wmma::load_matrix_sync(k_frag[1], &sK[(wc*2+1)*WMMA_N*D_PAD + kk*WMMA_K], D_PAD);
+                wmma::mma_sync(s_frag[0], q_frag, k_frag[0], s_frag[0]);
+                wmma::mma_sync(s_frag[1], q_frag, k_frag[1], s_frag[1]);
+            }
+            for (int f = 0; f < 2; f++) {
+                for (int e = 0; e < s_frag[f].num_elements; e++) s_frag[f].x[e] *= scale;
+                wmma::store_matrix_sync(&sS[wr*WMMA_M*BC_PAD + (wc*2+f)*WMMA_N], s_frag[f], BC_PAD, wmma::mem_row_major);
+            }
+        }
+        __syncthreads();
+
+        // FA-2 Softmax (Padded)
+        {
+            int my_row = tid / 4, my_lane = tid % 4;
+            int c_start = my_lane * (BC/4), c_end = c_start + (BC/4);
+            float lmax = -INFINITY;
+            for (int c = c_start; c < c_end; c++)
+                if (kv_start + c < N) lmax = fmaxf(lmax, sS[my_row*BC_PAD + c]);
+            lmax = fmaxf(lmax, __shfl_xor_sync(0xffffffff, lmax, 1));
+            lmax = fmaxf(lmax, __shfl_xor_sync(0xffffffff, lmax, 2));
+            float m_old = row_m[my_row], m_new = fmaxf(m_old, lmax);
+            float corr = __expf(m_old - m_new);
+            if (my_lane == 0) { row_l[my_row] = corr * row_l[my_row]; row_m[my_row] = m_new; }
+            for (int c = my_lane; c < D; c += 4) sO[my_row*D_PAD + c] *= corr;
+            float lsum = 0.0f;
+            for (int c = c_start; c < c_end; c++) {
+                float p = (kv_start + c < N) ? __expf(sS[my_row*BC_PAD + c] - m_new) : 0.0f;
+                sP[my_row*BC_PAD + c] = __float2half(p);
+                lsum += p;
+            }
+            lsum += __shfl_xor_sync(0xffffffff, lsum, 1);
+            lsum += __shfl_xor_sync(0xffffffff, lsum, 2);
+            if (my_lane == 0) row_l[my_row] += lsum;
+        }
+        __syncthreads();
+
+        // GEMM-II: O_raw += P @ V (Padded)
+        {
+            wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> p_frag;
+            wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::row_major> v_frag[2];
+            wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> o_frag[2];
+            wmma::load_matrix_sync(o_frag[0], &sO[wr*WMMA_M*D_PAD + (wc*2+0)*WMMA_N], D_PAD, wmma::mem_row_major);
+            wmma::load_matrix_sync(o_frag[1], &sO[wr*WMMA_M*D_PAD + (wc*2+1)*WMMA_N], D_PAD, wmma::mem_row_major);
+            for (int kk = 0; kk < BC / WMMA_K; kk++) {
+                wmma::load_matrix_sync(p_frag, &sP[wr*WMMA_M*BC_PAD + kk*WMMA_K], BC_PAD);
+                wmma::load_matrix_sync(v_frag[0], &sV[kk*WMMA_K*D_PAD + (wc*2+0)*WMMA_N], D_PAD);
+                wmma::load_matrix_sync(v_frag[1], &sV[kk*WMMA_K*D_PAD + (wc*2+1)*WMMA_N], D_PAD);
+                wmma::mma_sync(o_frag[0], p_frag, v_frag[0], o_frag[0]);
+                wmma::mma_sync(o_frag[1], p_frag, v_frag[1], o_frag[1]);
+            }
+            wmma::store_matrix_sync(&sO[wr*WMMA_M*D_PAD + (wc*2+0)*WMMA_N], o_frag[0], D_PAD, wmma::mem_row_major);
+            wmma::store_matrix_sync(&sO[wr*WMMA_M*D_PAD + (wc*2+1)*WMMA_N], o_frag[1], D_PAD, wmma::mem_row_major);
+        }
+        __syncthreads();
+    }
+
+    for (int i = tid; i < BR * D; i += S45_BLK) {
+        int r = i / D, c = i % D, gr = q_start + r;
+        if (gr < N) O[offset + gr*D + c] = sO[r * D_PAD + c] / row_l[r];
+    }
+}
+
+void launch_flash_v7(const half* d_Q, const half* d_K, const half* d_V,
+                     float* d_O, int B_nh, int N) {
+    dim3 grid((N + S7_BR - 1) / S7_BR, B_nh);
+    dim3 block(S45_BLK);
+    size_t smem = (size_t)(S7_BR * S7_D_PAD + 2 * S7_BC * S7_D_PAD + S7_BR * S7_BC_PAD) * sizeof(half)
+               + (size_t)(S7_BR * S7_BC_PAD + S7_BR * S7_D_PAD + S7_BR + S7_BR) * sizeof(float);
+    CUDA_CHECK(cudaFuncSetAttribute(flash_wmma_v7, cudaFuncAttributeMaxDynamicSharedMemorySize, 98304));
+    flash_wmma_v7<<<grid, block, smem>>>(d_Q, d_K, d_V, d_O, N, 1.0f / sqrtf((float)HEAD_DIM));
+}
+
 
 // ============================================================
 //  Utility: float ↔ half conversion kernels
@@ -1516,6 +1698,36 @@ int main(int argc, char** argv) {
             printf("  Stage 6 (async dbl-buf): %8.3f ms  %6.2f TFLOPS  "
                    "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
             CUDA_CHECK(cudaFree(d_O6));
+        }
+
+        // ==========================================================
+        //  STAGE 7: Optimized Smem Layout (Padding)
+        // ==========================================================
+        {
+            float ms = 0.0f;
+            float* d_O7;
+            CUDA_CHECK(cudaMalloc(&d_O7, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O7, 0, qkv_bytes));
+            for (int r = 0; r < warmup; r++)
+                launch_flash_v7(d_Qh, d_Kh, d_Vh, d_O7, B_nh, N);
+            CUDA_CHECK(cudaDeviceSynchronize());
+
+            CUDA_CHECK(cudaMemset(d_O7, 0, qkv_bytes));
+            CUDA_CHECK(cudaEventRecord(start));
+            for (int r = 0; r < iters; r++)
+                launch_flash_v7(d_Qh, d_Kh, d_Vh, d_O7, B_nh, N);
+            CUDA_CHECK(cudaEventRecord(stop));
+            CUDA_CHECK(cudaEventSynchronize(stop));
+            CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
+            ms /= iters;
+
+            double tflops = total_flops / (ms / 1000.0) / 1e12;
+            CUDA_CHECK(cudaMemcpy(h_O_test, d_O7, qkv_bytes, cudaMemcpyDeviceToHost));
+            float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
+            float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
+            printf("  Stage 7 (Smem Padded)   : %8.3f ms  %6.2f TFLOPS  "
+                   "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
+            CUDA_CHECK(cudaFree(d_O7));
         }
 
         printf("\n");

@@ -114,6 +114,7 @@ S3=$(awk '/N = 4096/{p=1} p && /Stage 3/{match($0,/[0-9]+\.[0-9]+ ms/); print su
 S4=$(awk '/N = 4096/{p=1} p && /Stage 4/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_cuda.log")
 S5=$(awk '/N = 4096/{p=1} p && /Stage 5/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_cuda.log")
 S6=$(awk '/N = 4096/{p=1} p && /Stage 6/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_cuda.log")
+S7=$(awk '/N = 4096/{p=1} p && /Stage 7/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_cuda.log")
 
 T0=$(awk '/N = 4096/{p=1} p && /Stage 0/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
 T1=$(awk '/N = 4096/{p=1} p && /Stage 1/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
@@ -122,6 +123,7 @@ T3=$(awk '/N = 4096/{p=1} p && /Stage 3/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); prin
 T4=$(awk '/N = 4096/{p=1} p && /Stage 4/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
 T5=$(awk '/N = 4096/{p=1} p && /Stage 5/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
 T6=$(awk '/N = 4096/{p=1} p && /Stage 6/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
+T7=$(awk '/N = 4096/{p=1} p && /Stage 7/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
 
 PT=$(awk '/dtype = fp16/{p=1} p && /N= *4096/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_pytorch.log")
 PT_T=$(awk '/dtype = fp16/{p=1} p && /N= *4096/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_pytorch.log")
@@ -134,22 +136,23 @@ printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 3 (wmma 32x32):"     "${S3:----}"  
 printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 4 (wmma 64x64):"     "${S4:----}"  "${T4:----}"
 printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 5 (FA-2 deferred):"  "${S5:----}"  "${T5:----}"
 printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 6 (async dbl-buf):"  "${S6:----}"  "${T6:----}"
+printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 7 (Smem Padded):"    "${S7:----}"  "${T7:----}"
 printf "  %-28s %8s ms   %s TFLOPS\n" "PyTorch SDPA fp16:"        "${PT:----}"  "${PT_T:----}"
 printf "  %-28s %8s ms   %s TFLOPS\n" "cuBLAS ceiling:"           "—"           "${CB:----}"
 echo ""
 
-[ -n "$S0" ] && [ -n "$S6" ] && [ "$S6" != "0" ] && \
-    awk -v a="$S0" -v b="$S6" \
-        'BEGIN{printf "  Stage 6 vs Naive:      %.1fx faster\n", a/b}'
-[ -n "$S4" ] && [ -n "$S6" ] && [ "$S6" != "0" ] && \
-    awk -v a="$S4" -v b="$S6" \
-        'BEGIN{printf "  Stage 6 vs Stage 4:    %.2fx faster\n", a/b}'
-[ -n "$S6" ] && [ -n "$PT" ] && [ "$PT" != "0" ] && \
-    awk -v s="$S6" -v p="$PT" \
-        'BEGIN{printf "  Stage 6 vs PyTorch:    %.1fx slower  (%.1f%% of FA-2)\n", s/p, p/s*100}'
-[ -n "$T6" ] && [ -n "$CB" ] && [ "$CB" != "0" ] && \
-    awk -v t="$T6" -v c="$CB" \
-        'BEGIN{printf "  Stage 6 TC efficiency: %.1f%% of cuBLAS ceiling\n", t/c*100}'
+[ -n "$S0" ] && [ -n "$S7" ] && [ "$S7" != "0" ] && \
+    awk -v a="$S0" -v b="$S7" \
+        'BEGIN{printf "  Stage 7 vs Naive:      %.1fx faster\n", a/b}'
+[ -n "$S6" ] && [ -n "$S7" ] && [ "$S7" != "0" ] && \
+    awk -v a="$S6" -v b="$S7" \
+        'BEGIN{printf "  Stage 7 vs Stage 6:    %.2fx faster\n", a/b}'
+[ -n "$S7" ] && [ -n "$PT" ] && [ "$PT" != "0" ] && \
+    awk -v s="$S7" -v p="$PT" \
+        'BEGIN{printf "  Stage 7 vs PyTorch:    %.1fx slower  (%.1f%% of FA-2)\n", s/p, p/s*100}'
+[ -n "$T7" ] && [ -n "$CB" ] && [ "$CB" != "0" ] && \
+    awk -v t="$T7" -v c="$CB" \
+        'BEGIN{printf "  Stage 7 TC efficiency: %.1f%% of cuBLAS ceiling\n", t/c*100}'
 echo ""
 
 echo "=== Nsight Systems — GPU Kernel Summary ==="
