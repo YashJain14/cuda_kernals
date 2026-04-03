@@ -488,8 +488,8 @@ __global__ void flash_wmma_v3(const half* __restrict__ Q,
         for (int i = tid; i < BC * D; i += S3_BLK) {
             int r = i / D, c = i % D;
             int gr = kv_start + r;
-            sK[i] = (gr < N) ? K[offset + gr * d + c] : __float2half(0.0f);
-            sV[i] = (gr < N) ? V[offset + gr * d + c] : __float2half(0.0f);
+            sK[i] = (gr < N) ? K[offset + gr * D + c] : __float2half(0.0f);
+            sV[i] = (gr < N) ? V[offset + gr * D + c] : __float2half(0.0f);
         }
         __syncthreads();
 
