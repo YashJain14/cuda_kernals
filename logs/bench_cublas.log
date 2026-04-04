@@ -5,19 +5,19 @@
 ============================================================
 
   N = 1024
-    GEMM-I  (Q@K^T) only :    0.077 ms   55.70 TFLOPS
-    GEMM-II (P@V)   only :    0.070 ms   61.77 TFLOPS
-    Both GEMMs (ceiling) :    0.152 ms   56.49 TFLOPS  <-- target
+    GEMM-I  (Q@K^T) only :    0.078 ms   55.26 TFLOPS
+    GEMM-II (P@V)   only :    0.069 ms   61.86 TFLOPS
+    Both GEMMs (ceiling) :    0.152 ms   56.68 TFLOPS  <-- target
 
   N = 2048
-    GEMM-I  (Q@K^T) only :    0.263 ms   65.20 TFLOPS
-    GEMM-II (P@V)   only :    0.230 ms   74.66 TFLOPS
-    Both GEMMs (ceiling) :    0.503 ms   68.35 TFLOPS  <-- target
+    GEMM-I  (Q@K^T) only :    0.266 ms   64.55 TFLOPS
+    GEMM-II (P@V)   only :    0.230 ms   74.80 TFLOPS
+    Both GEMMs (ceiling) :    0.502 ms   68.42 TFLOPS  <-- target
 
   N = 4096
-    GEMM-I  (Q@K^T) only :    1.007 ms   68.22 TFLOPS
-    GEMM-II (P@V)   only :    0.940 ms   73.10 TFLOPS
-    Both GEMMs (ceiling) :    1.950 ms   70.50 TFLOPS  <-- target
+    GEMM-I  (Q@K^T) only :    0.996 ms   68.99 TFLOPS
+    GEMM-II (P@V)   only :    0.940 ms   73.12 TFLOPS
+    Both GEMMs (ceiling) :    1.947 ms   70.58 TFLOPS  <-- target
 
 ============================================================
   Your Stage 4 TFLOPS / cuBLAS ceiling = efficiency %
