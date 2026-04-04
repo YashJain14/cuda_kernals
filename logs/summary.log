@@ -1,43 +1,43 @@
 ============================================================
   SC4064 FlashAttention — Results Summary
-  Sat Apr  4 14:09:32 +08 2026
+  Sat Apr  4 14:17:26 +08 2026
   GPU: NVIDIA A100-SXM4-40GB
 ============================================================
 
 === CUDA Kernel Stages (N=4096) ===
-    Stage 0 (Naive 3-kernel) :  164.424 ms    0.84 TFLOPS
-    Stage 1 (Fused 1-thr/row):  261.836 ms    0.52 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
-    Stage 2 (Tiled coop fp32):  254.318 ms    0.54 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
-    Stage 3 (wmma TC fp16)   :   15.549 ms    8.84 TFLOPS  maxErr=5.43e-07  meanRelErr=1.07e-03
-    Stage 4 (wmma 64x64)     :   13.799 ms    9.96 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
-    Stage 5 (FA-2 deferred l):   13.787 ms    9.97 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
-    Stage 6 (async dbl-buf):   13.179 ms   10.43 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+    Stage 0 (Naive 3-kernel) :  164.338 ms    0.84 TFLOPS
+    Stage 1 (Fused 1-thr/row):  261.920 ms    0.52 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+    Stage 2 (Tiled coop fp32):  254.162 ms    0.54 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+    Stage 3 (wmma TC fp16)   :   15.571 ms    8.83 TFLOPS  maxErr=5.43e-07  meanRelErr=1.07e-03
+    Stage 4 (wmma 64x64)     :   13.790 ms    9.97 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+    Stage 5 (FA-2 deferred l):   13.788 ms    9.97 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+    Stage 6 (async dbl-buf):   13.171 ms   10.43 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
     Stage 7 (Smem Padded)   :    4.702 ms   29.23 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
-    Stage 8 (PTX mma.sync)  :    4.585 ms   29.98 TFLOPS  maxErr=1.56e-03  meanRelErr=3.78e+00
+    Stage 8 (PTX mma.sync)  :    4.585 ms   29.98 TFLOPS  maxErr=2.93e-06  meanRelErr=5.10e-03
 
 === cuBLAS Tensor Core Ceiling ===
-      Both GEMMs (ceiling) :    1.948 ms   70.56 TFLOPS  <-- target
+      Both GEMMs (ceiling) :    1.952 ms   70.42 TFLOPS  <-- target
 
 === PyTorch FlashAttention-2 Reference (fp16) ===
-    N= 4096     1.012 ms  135.86 TFLOPS
+    N= 4096     1.013 ms  135.64 TFLOPS
 
 === Speedup Table (N=4096) ===
-  Stage 0 (Naive):              164.424 ms   0.84 TFLOPS
-  Stage 1 (Fused):              261.836 ms   0.52 TFLOPS
-  Stage 2 (Tiled):              254.318 ms   0.54 TFLOPS
-  Stage 3 (wmma 32x32):          15.549 ms   8.84 TFLOPS
-  Stage 4 (wmma 64x64):          13.799 ms   9.96 TFLOPS
-  Stage 5 (FA-2 deferred):       13.787 ms   9.97 TFLOPS
-  Stage 6 (async dbl-buf):       13.179 ms   10.43 TFLOPS
+  Stage 0 (Naive):              164.338 ms   0.84 TFLOPS
+  Stage 1 (Fused):              261.920 ms   0.52 TFLOPS
+  Stage 2 (Tiled):              254.162 ms   0.54 TFLOPS
+  Stage 3 (wmma 32x32):          15.571 ms   8.83 TFLOPS
+  Stage 4 (wmma 64x64):          13.790 ms   9.97 TFLOPS
+  Stage 5 (FA-2 deferred):       13.788 ms   9.97 TFLOPS
+  Stage 6 (async dbl-buf):       13.171 ms   10.43 TFLOPS
   Stage 7 (Smem Padded):          4.702 ms   29.23 TFLOPS
   Stage 8 (PTX mma.sync):         4.585 ms   29.98 TFLOPS
-  PyTorch SDPA fp16:              1.012 ms   135.86 TFLOPS
-  cuBLAS ceiling:                   — ms   70.56 TFLOPS
+  PyTorch SDPA fp16:              1.013 ms   135.64 TFLOPS
+  cuBLAS ceiling:                   — ms   70.42 TFLOPS
 
-  Stage 8 vs Naive:      35.9x faster
+  Stage 8 vs Naive:      35.8x faster
   Stage 8 vs Stage 7:    1.03x faster
   Stage 8 vs PyTorch:    4.5x slower  (22.1% of FA-2)
-  Stage 8 TC efficiency: 42.5% of cuBLAS ceiling
+  Stage 8 TC efficiency: 42.6% of cuBLAS ceiling
 
 === Nsight Systems — GPU Kernel Summary ===
 
