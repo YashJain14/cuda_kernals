@@ -1530,19 +1530,19 @@ __global__ void flash_mma_v8(const half* __restrict__ Q,
                 ldmatrix_x4(a0, a1, a2, a3,
                     &sQ[(wr*16 + lane_id % 16) * D_PAD + kk*16 + (lane_id / 16) * 8]);
 
-                // 4 col-groups of 8 cols each → 4 mma calls
+                // 4 col-groups of 8 cols each -> 4 mma calls
                 for (int nc = 0; nc < 4; nc++) {
                     int col_base = wc * 32 + nc * 8;
                     // Load B (K^T fragment): ldmatrix.x2.trans col-major 16x8
+                    // K is [BC][D_PAD]. K^T is [D][BC]. Reduction is over D.
+                    // We need 16 elements of D and 8 of BC.
                     uint32_t kb0, kb1;
                     {
-                        // K stored as [col][D_PAD] = [N][K] col-major for K^T
-                        // ldmatrix.x2 (no trans): lane_id%8 selects row, (lane_id/8)%2 selects 8-elem group
                         uint32_t kaddr = static_cast<uint32_t>(
                             __cvta_generic_to_shared(
                                 &sK[(col_base + lane_id % 8) * D_PAD + kk*16 + ((lane_id / 8) % 2) * 8]));
                         asm volatile(
-                            "ldmatrix.sync.aligned.m8n8.x2.shared.b16 {%0,%1}, [%2];\n"
+                            "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {%0,%1}, [%2];\n"
                             : "=r"(kb0), "=r"(kb1) : "r"(kaddr));
                     }
 
@@ -1623,13 +1623,12 @@ __global__ void flash_mma_v8(const half* __restrict__ Q,
                     {
                         // V stored row-major [k_row][D_PAD]. For B operand of m16n8k16,
                         // we need col-major 16×8 view. V rows become columns.
-                        // Reshape: treat V transposed as [d_col][BC_PAD] = [N][K].
-                        // But V is [K][D_PAD] row-major, so we need trans.
-                        // ldmatrix.x2.trans: lane_id%8 selects which of 8 rows to start,
-                        // (lane_id/8)%2 selects 8-element group within the 16-element k-dim
+                        // We load 16 rows (BC-dim) and 8 columns (D-dim).
+                        // ldmatrix.x2.trans: lane_id%8 selects rows 0..7, 
+                        // (lane_id/8)%2 selects the next 8 rows (8..15).
                         uint32_t vaddr = static_cast<uint32_t>(
                             __cvta_generic_to_shared(
-                                &sV[(kk*16 + lane_id % 8) * D_PAD + col_base + ((lane_id / 8) % 2) * 8]));
+                                &sV[(kk*16 + (lane_id % 8) + ((lane_id / 8) % 2) * 8) * D_PAD + col_base]));
                         asm volatile(
                             "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {%0,%1}, [%2];\n"
                             : "=r"(vb0), "=r"(vb1) : "r"(vaddr));
