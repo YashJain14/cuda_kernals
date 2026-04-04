@@ -1763,6 +1763,9 @@ using GmemCopyAtom = Copy_Atom<SM80_CP_ASYNC_CACHEALWAYS<cute::uint128_t>, half_
 // ── Copy atoms for SMEM→RMEM ──
 using SmemCopyAtom = Copy_Atom<DefaultCopy, half_t>;
 
+using SmemLayoutP  = decltype(tile_to_shape(SmemLayoutAtom{},
+                              Shape<Int<BR>, Int<BC>>{}));
+
 // ── Shared memory struct ──
 struct SharedStorage {
     cute::array_aligned<half_t, cosize_v<SmemLayoutQ>>  sQ;
@@ -1770,6 +1773,7 @@ struct SharedStorage {
     cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sK1;
     cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sV0;
     cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sV1;
+    cute::array_aligned<half_t, cosize_v<SmemLayoutP>>  sP;
 };
 
 // ── Helper: in-register row-wise reduce (max or sum) across MMA fragments ──
