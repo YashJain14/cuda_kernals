@@ -1,7 +1,7 @@
 ============================================================
-  Job:         13488869.pbs101
-  Node:        x1000c0s0b0n0
-  Started:     Sat Apr  4 16:09:48 +08 2026
+  Job:         13490501.pbs101
+  Node:        x1000c2s5b0n0
+  Started:     Sat Apr  4 18:05:32 +08 2026
   Working dir: /home/users/ntu/yash012/cuda_kernals
   Log dir:     logs
 ============================================================
@@ -16,19 +16,166 @@ PyTorch: 2.5.1+cu121
 --- Build ---
 rm -f flash_attn cublas_ref
 nvcc -O3 -arch=sm_80 --use_fast_math -std=c++17 -I/home/users/ntu/yash012/cuda_kernals/cutlass/include -Xcompiler -Wall flash_attention.cu -o flash_attn
-flash_attention.cu(2031): error: identifier "transpose" is undefined
-              auto sV_trans = make_tensor(sV_cur.data(), transpose(sV_cur.layout()));
-                                                         ^
+nvcc -O3 -arch=sm_80 --use_fast_math -std=c++17 -I/home/users/ntu/yash012/cuda_kernals/cutlass/include -Xcompiler -Wall cublas_ref.cu -lcublas -o cublas_ref
+Build OK
 
-flash_attention.cu(2050): error: no instance of overloaded function "copy" matches the argument list
-            argument types are: (cute::TiledCopy<cute::Copy_Atom<cute::DefaultCopy, cutlass::half_t>, cute::Layout<cute::tuple<cute::tuple<cute::_4, cute::_8, cute::C<8>>, cute::tuple<cute::tuple<cute::_2, cute::_2>, cute::tuple<cute::_1, cute::_1>>>, cute::tuple<cute::tuple<cute::_16, cute::_1, cute::_0>, cute::tuple<cute::tuple<cute::_8, cute::_64>, cute::tuple<cute::_0, cute::_0>>>>, cute::tuple<cute::C<8>, cute::C<16>>>, <error-type>, <error-type>)
-                  copy(smem_tiled_copy_V, tVsV(_, _, k), tOrV_copy(_, _, k));
-                  ^
+--- CUDA benchmark: Stages 0-9 ---
+============================================================
+  FlashAttention Benchmark — A100 40GB
+  B=2  nh=16  d=64  B*nh=32
+  Warmup=3  Iters=10
+============================================================
 
-flash_attention.cu(2051): error: no instance of overloaded function "gemm" matches the argument list
-            argument types are: (TiledMMA_t, cute::Tensor<cute::ViewEngine<cutlass::half_t *>, cute::Layout<cute::tuple<cute::tuple<cute::_2, cute::_2, cute::_2>, cute::_1>, cute::tuple<cute::tuple<cute::_1, cute::_2, cute::_4>, cute::_0>>>, <error-type>, cute::Tensor<cute::ArrayEngine<float, 32UL>, cute::Layout<cute::tuple<cute::tuple<cute::_2, cute::_2>, cute::_1, cute::_8>, cute::tuple<cute::tuple<cute::_1, cute::_2>, cute::_0, cute::_4>>>)
-                  gemm(tiled_mma, tOrP(_, _, k), tOrV(_, _, k), rO);
-                  ^
+------------------------------------------------------------
+  Sequence Length N = 1024
+  Total FLOPs: 8.590e+09
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   12.385 ms    0.69 TFLOPS
+  Stage 1 (Fused 1-thr/row):   24.074 ms    0.36 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 2 (Tiled coop fp32):   16.789 ms    0.51 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 3 (wmma TC fp16)   :    1.040 ms    8.26 TFLOPS  maxErr=1.11e-06  meanRelErr=9.16e-04
+  Stage 4 (wmma 64x64)     :    0.923 ms    9.30 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
+  Stage 5 (FA-2 deferred l):    0.924 ms    9.29 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
+  Stage 6 (async dbl-buf):    0.874 ms    9.83 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
+  Stage 7 (Smem Padded)   :    0.320 ms   26.87 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
+  Stage 8 (PTX mma.sync)  :    0.312 ms   27.51 TFLOPS  maxErr=5.27e-06  meanRelErr=4.63e-03
+  Stage 9 (CuTe FA-2)    :    0.173 ms   49.75 TFLOPS  maxErr=4.66e-03  meanRelErr=4.70e+00
 
-3 errors detected in the compilation of "flash_attention.cu".
-make: *** [Makefile:12: flash_attn] Error 2
+------------------------------------------------------------
+  Sequence Length N = 2048
+  Total FLOPs: 3.436e+10
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   40.579 ms    0.85 TFLOPS
+  Stage 1 (Fused 1-thr/row):   72.532 ms    0.47 TFLOPS  maxErr=6.64e-09  meanRelErr=2.17e-06
+  Stage 2 (Tiled coop fp32):   63.520 ms    0.54 TFLOPS  maxErr=6.40e-09  meanRelErr=2.17e-06
+  Stage 3 (wmma TC fp16)   :    3.921 ms    8.76 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 4 (wmma 64x64)     :    3.642 ms    9.43 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 5 (FA-2 deferred l):    3.642 ms    9.43 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 6 (async dbl-buf):    3.467 ms    9.91 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 7 (Smem Padded)   :    1.252 ms   27.45 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 8 (PTX mma.sync)  :    1.228 ms   27.98 TFLOPS  maxErr=3.96e-06  meanRelErr=4.70e-03
+  Stage 9 (CuTe FA-2)    :    0.598 ms   57.50 TFLOPS  maxErr=3.42e-03  meanRelErr=4.75e+00
+
+------------------------------------------------------------
+  Sequence Length N = 4096
+  Total FLOPs: 1.374e+11
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :  164.351 ms    0.84 TFLOPS
+  Stage 1 (Fused 1-thr/row):  261.498 ms    0.53 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 2 (Tiled coop fp32):  253.436 ms    0.54 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 3 (wmma TC fp16)   :   15.520 ms    8.86 TFLOPS  maxErr=5.43e-07  meanRelErr=1.07e-03
+  Stage 4 (wmma 64x64)     :   13.770 ms    9.98 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+  Stage 5 (FA-2 deferred l):   13.773 ms    9.98 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+  Stage 6 (async dbl-buf):   13.127 ms   10.47 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+  Stage 7 (Smem Padded)   :    4.660 ms   29.49 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+  Stage 8 (PTX mma.sync)  :    4.564 ms   30.11 TFLOPS  maxErr=2.93e-06  meanRelErr=5.10e-03
+  Stage 9 (CuTe FA-2)    :    2.218 ms   61.96 TFLOPS  maxErr=2.62e-03  meanRelErr=4.77e+00
+
+============================================================
+  Done.
+============================================================
+
+--- cuBLAS Tensor Core ceiling ---
+============================================================
+  cuBLAS fp16 Tensor Core Ceiling — A100 40GB
+  B=2  nh=16  d=64  B*nh=32
+  Both GEMMs back-to-back, no softmax — best possible.
+============================================================
+
+  N = 1024
+    GEMM-I  (Q@K^T) only :    0.078 ms   54.76 TFLOPS
+    GEMM-II (P@V)   only :    0.070 ms   61.68 TFLOPS
+    Both GEMMs (ceiling) :    0.151 ms   57.03 TFLOPS  <-- target
+
+  N = 2048
+    GEMM-I  (Q@K^T) only :    0.267 ms   64.33 TFLOPS
+    GEMM-II (P@V)   only :    0.230 ms   74.80 TFLOPS
+    Both GEMMs (ceiling) :    0.503 ms   68.37 TFLOPS  <-- target
+
+  N = 4096
+    GEMM-I  (Q@K^T) only :    1.004 ms   68.47 TFLOPS
+    GEMM-II (P@V)   only :    0.939 ms   73.18 TFLOPS
+    Both GEMMs (ceiling) :    1.948 ms   70.55 TFLOPS  <-- target
+
+============================================================
+  Your Stage 4 TFLOPS / cuBLAS ceiling = efficiency %
+============================================================
+
+--- PyTorch SDPA reference ---
+==============================================================
+  PyTorch scaled_dot_product_attention  (FlashAttention-2)
+  B=2  nh=16  d=64
+  GPU: NVIDIA A100-SXM4-40GB
+  PyTorch: 2.5.1+cu121
+==============================================================
+
+  dtype = fp16  (matches Stage 3 / Stage 4 inputs)
+  ----------------------------------------------------------
+  N= 1024     0.089 ms   96.14 TFLOPS
+  N= 2048     0.269 ms  127.56 TFLOPS
+  N= 4096     1.014 ms  135.53 TFLOPS
+
+  dtype = fp32  (matches Stage 0/1/2 baseline)
+  ----------------------------------------------------------
+  N= 1024     0.608 ms   14.12 TFLOPS
+  N= 2048     2.328 ms   14.76 TFLOPS
+  N= 4096     7.562 ms   18.17 TFLOPS
+
+==============================================================
+  Compare your Stage 4 TFLOPS to the fp16 numbers above.
+  Stage4 / PyTorch_fp16 = your efficiency vs FlashAttention-2
+==============================================================
+
+--- Nsight Systems profiling ---
+nsys profile complete — see logs/profile_stages.nsys-rep
+
+--- Generating summary ---
+============================================================
+  SC4064 FlashAttention — Results Summary
+  Sat Apr  4 18:07:15 +08 2026
+  GPU: NVIDIA A100-SXM4-40GB
+============================================================
+
+=== CUDA Kernel Stages (N=4096) ===
+    Stage 0 (Naive 3-kernel) :  164.351 ms    0.84 TFLOPS
+    Stage 1 (Fused 1-thr/row):  261.498 ms    0.53 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+    Stage 2 (Tiled coop fp32):  253.436 ms    0.54 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+    Stage 3 (wmma TC fp16)   :   15.520 ms    8.86 TFLOPS  maxErr=5.43e-07  meanRelErr=1.07e-03
+    Stage 4 (wmma 64x64)     :   13.770 ms    9.98 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+    Stage 5 (FA-2 deferred l):   13.773 ms    9.98 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+    Stage 6 (async dbl-buf):   13.127 ms   10.47 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+    Stage 7 (Smem Padded)   :    4.660 ms   29.49 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+    Stage 8 (PTX mma.sync)  :    4.564 ms   30.11 TFLOPS  maxErr=2.93e-06  meanRelErr=5.10e-03
+    Stage 9 (CuTe FA-2)    :    2.218 ms   61.96 TFLOPS  maxErr=2.62e-03  meanRelErr=4.77e+00
+
+=== cuBLAS Tensor Core Ceiling ===
+      Both GEMMs (ceiling) :    1.948 ms   70.55 TFLOPS  <-- target
+
+=== PyTorch FlashAttention-2 Reference (fp16) ===
+    N= 4096     1.014 ms  135.53 TFLOPS
+
+=== Speedup Table (N=4096) ===
+  Stage 0 (Naive):              164.351 ms   0.84 TFLOPS
+  Stage 1 (Fused):              261.498 ms   0.53 TFLOPS
+  Stage 2 (Tiled):              253.436 ms   0.54 TFLOPS
+  Stage 3 (wmma 32x32):          15.520 ms   8.86 TFLOPS
+  Stage 4 (wmma 64x64):          13.770 ms   9.98 TFLOPS
+  Stage 5 (FA-2 deferred):       13.773 ms   9.98 TFLOPS
+  Stage 6 (async dbl-buf):       13.127 ms   10.47 TFLOPS
+  Stage 7 (Smem Padded):          4.660 ms   29.49 TFLOPS
+  Stage 8 (PTX mma.sync):         4.564 ms   30.11 TFLOPS
+  Stage 9 (CuTe FA-2):            2.218 ms   61.96 TFLOPS
+  PyTorch SDPA fp16:              1.014 ms   135.53 TFLOPS
+  cuBLAS ceiling:                   — ms   70.55 TFLOPS
+
+  Stage 9 vs Naive:      74.1x faster
+  Stage 8 vs Stage 7:    1.02x faster
+  Stage 9 vs Stage 8:    2.06x faster
+  Stage 9 vs PyTorch:    2.2x slower  (45.7% of FA-2)
+  Stage 9 TC efficiency: 87.8% of cuBLAS ceiling
+
+=== Nsight Systems — GPU Kernel Summary ===
+
+============================================================
+
+Job finished: Sat Apr  4 18:07:15 +08 2026
