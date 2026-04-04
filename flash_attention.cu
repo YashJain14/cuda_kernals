@@ -1770,7 +1770,6 @@ struct SharedStorage {
     cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sK1;
     cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sV0;
     cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sV1;
-    cute::array_aligned<half_t, BR * BC>                sP;
 };
 
 // ── Helper: in-register row-wise reduce (max or sum) across MMA fragments ──
@@ -1873,61 +1872,73 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
     // ── KV tile loop ──
     int Tc = (N + BC - 1) / BC;
 
+    // ── Prefetch tile 0 ──
+    if (Tc > 0) {
+        auto gK_tile = make_tensor(make_gmem_ptr(gK_ptr + offset),
+                                   Shape<Int<BC>, Int<D>>{}, Stride<Int<D>, _1>{});
+        auto gV_tile = make_tensor(make_gmem_ptr(gV_ptr + offset),
+                                   Shape<Int<BC>, Int<D>>{}, Stride<Int<D>, _1>{});
+        auto sK_pref = make_tensor(make_smem_ptr(smem.sK0.data()), SmemLayoutKV{});
+        auto sV_pref = make_tensor(make_smem_ptr(smem.sV0.data()), SmemLayoutKV{});
+
+        auto tKgK = gmem_thr_copy.partition_S(gK_tile);
+        auto tKsK = gmem_thr_copy.partition_D(sK_pref);
+        auto tVgV = gmem_thr_copy.partition_S(gV_tile);
+        auto tVsV = gmem_thr_copy.partition_D(sV_pref);
+
+        copy(gmem_tiled_copy, tKgK, tKsK);
+        copy(gmem_tiled_copy, tVgV, tVsV);
+        cp_async_fence();
+    }
+
     for (int j = 0; j < Tc; j++) {
-        int kv_start = j * BC;
+        // ── Prefetch tile j+1 ──
+        if (j + 1 < Tc) {
+            int next_kv = (j + 1) * BC;
+            half_t* sK_next_ptr = ((j + 1) & 1) ? smem.sK1.data() : smem.sK0.data();
+            half_t* sV_next_ptr = ((j + 1) & 1) ? smem.sV1.data() : smem.sV0.data();
+            auto gK_next = make_tensor(make_gmem_ptr(gK_ptr + offset + next_kv * D),
+                                       Shape<Int<BC>, Int<D>>{}, Stride<Int<D>, _1>{});
+            auto gV_next = make_tensor(make_gmem_ptr(gV_ptr + offset + next_kv * D),
+                                       Shape<Int<BC>, Int<D>>{}, Stride<Int<D>, _1>{});
+            auto sK_next = make_tensor(make_smem_ptr(sK_next_ptr), SmemLayoutKV{});
+            auto sV_next = make_tensor(make_smem_ptr(sV_next_ptr), SmemLayoutKV{});
 
-        // Pick double-buffer slot
-        half_t* sK_ptr = (j & 1) ? smem.sK1.data() : smem.sK0.data();
-        half_t* sV_ptr = (j & 1) ? smem.sV1.data() : smem.sV0.data();
+            auto tKgK_n = gmem_thr_copy.partition_S(gK_next);
+            auto tKsK_n = gmem_thr_copy.partition_D(sK_next);
+            auto tVgV_n = gmem_thr_copy.partition_S(gV_next);
+            auto tVsV_n = gmem_thr_copy.partition_D(sV_next);
 
-        // Load K, V tile to smem
-        {
-            auto gK_tile = make_tensor(
-                make_gmem_ptr(gK_ptr + offset + kv_start * D),
-                Shape<Int<BC>, Int<D>>{}, Stride<Int<D>, _1>{});
-            auto gV_tile = make_tensor(
-                make_gmem_ptr(gV_ptr + offset + kv_start * D),
-                Shape<Int<BC>, Int<D>>{}, Stride<Int<D>, _1>{});
-
-            auto sK_cur = make_tensor(make_smem_ptr(sK_ptr), SmemLayoutKV{});
-            auto sV_cur = make_tensor(make_smem_ptr(sV_ptr), SmemLayoutKV{});
-
-            auto tKgK = gmem_thr_copy.partition_S(gK_tile);
-            auto tKsK = gmem_thr_copy.partition_D(sK_cur);
-            auto tVgV = gmem_thr_copy.partition_S(gV_tile);
-            auto tVsV = gmem_thr_copy.partition_D(sV_cur);
-
-            copy(gmem_tiled_copy, tKgK, tKsK);
-            copy(gmem_tiled_copy, tVgV, tVsV);
+            copy(gmem_tiled_copy, tKgK_n, tKsK_n);
+            copy(gmem_tiled_copy, tVgV_n, tVsV_n);
             cp_async_fence();
+            cp_async_wait<1>();
+        } else {
             cp_async_wait<0>();
         }
         __syncthreads();
 
+        half_t* sK_ptr = (j & 1) ? smem.sK1.data() : smem.sK0.data();
+        half_t* sV_ptr = (j & 1) ? smem.sV1.data() : smem.sV0.data();
         auto sK_cur = make_tensor(make_smem_ptr(sK_ptr), SmemLayoutKV{});
         auto sV_cur = make_tensor(make_smem_ptr(sV_ptr), SmemLayoutKV{});
 
-        // ══ GEMM-I: S = Q @ K^T — result stays in registers ══
+        // ══ GEMM-I: S = Q @ K^T ══
         auto rS = partition_fragment_C(tiled_mma, Shape<Int<BR>, Int<BC>>{});
         clear(rS);
 
-        // K fragments partitioned as B operand (col-major / transposed)
-        auto tSrK = thr_mma.partition_fragment_B(sK_cur);  // (MMA, N, K)
-
-        // Load Q from smem to registers and compute S = Q @ K^T
         {
             auto smem_tiled_copy_Q = make_tiled_copy_A(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_Q   = smem_tiled_copy_Q.get_thread_slice(tid);
             auto tSsQ = smem_thr_copy_Q.partition_S(sQ);
+            auto tSrQ_copy = smem_thr_copy_Q.retile_D(tSrQ);
 
             auto smem_tiled_copy_K = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_K   = smem_tiled_copy_K.get_thread_slice(tid);
             auto tSsK = smem_thr_copy_K.partition_S(sK_cur);
-
-            auto tSrQ_copy = smem_thr_copy_Q.retile_D(tSrQ);
+            auto tSrK = partition_fragment_B(tiled_mma, Shape<Int<BC>, Int<D>>{});
             auto tSrK_copy = smem_thr_copy_K.retile_D(tSrK);
 
-            // K-dimension loop
             CUTE_UNROLL
             for (int k = 0; k < size<2>(tSrQ); k++) {
                 copy(smem_tiled_copy_Q, tSsQ(_, _, k), tSrQ_copy(_, _, k));
@@ -1936,19 +1947,10 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
             }
         }
 
-        // Apply scale
         CUTE_UNROLL
-        for (int i = 0; i < size(rS); i++) {
-            rS(i) *= scale;
-        }
+        for (int i = 0; i < size(rS); i++) rS(i) *= scale;
 
-        // ══ IN-REGISTER ONLINE SOFTMAX ══
-        // rS has shape (MMA=4, MMA_M, MMA_N)
-        // For m16n8k16: elements [0],[1] → row r0; [2],[3] → row r8
-        // MMA_M tiles index different 16-row blocks
-        // MMA_N tiles index different 8-col blocks across BC
-
-        // Step 1: find row max from rS
+        // ══ ONLINE SOFTMAX ══
         CUTE_UNROLL
         for (int mi = 0; mi < size<1>(rS); mi++) {
             float lmax_r0 = -INFINITY, lmax_r8 = -INFINITY;
@@ -1957,7 +1959,6 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
                 lmax_r0 = fmaxf(lmax_r0, fmaxf(rS(0, mi, ni), rS(1, mi, ni)));
                 lmax_r8 = fmaxf(lmax_r8, fmaxf(rS(2, mi, ni), rS(3, mi, ni)));
             }
-            // Cross-thread reduction: threads sharing same row (lane_id%4 varies)
             lmax_r0 = fmaxf(lmax_r0, __shfl_xor_sync(0xffffffff, lmax_r0, 1));
             lmax_r0 = fmaxf(lmax_r0, __shfl_xor_sync(0xffffffff, lmax_r0, 2));
             lmax_r8 = fmaxf(lmax_r8, __shfl_xor_sync(0xffffffff, lmax_r8, 1));
@@ -1969,7 +1970,6 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
             float corr_r0 = __expf(m_old_r0 - m_new_r0);
             float corr_r8 = __expf(m_old_r8 - m_new_r8);
 
-            // Rescale running O accumulators for this row
             CUTE_UNROLL
             for (int di = 0; di < size<2>(rO); di++) {
                 rO(0, mi, di) *= corr_r0; rO(1, mi, di) *= corr_r0;
@@ -1980,7 +1980,6 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
             r_max[ri0] = m_new_r0;
             r_max[ri1] = m_new_r8;
 
-            // Compute exp, accumulate sum
             float lsum_r0 = 0.0f, lsum_r8 = 0.0f;
             CUTE_UNROLL
             for (int ni = 0; ni < size<2>(rS); ni++) {
@@ -1988,8 +1987,7 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
                 float p1 = __expf(rS(1, mi, ni) - m_new_r0);
                 float p2 = __expf(rS(2, mi, ni) - m_new_r8);
                 float p3 = __expf(rS(3, mi, ni) - m_new_r8);
-                lsum_r0 += p0 + p1;
-                lsum_r8 += p2 + p3;
+                lsum_r0 += p0 + p1; lsum_r8 += p2 + p3;
                 rS(0, mi, ni) = p0; rS(1, mi, ni) = p1;
                 rS(2, mi, ni) = p2; rS(3, mi, ni) = p3;
             }
@@ -2001,157 +1999,27 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
             r_sum[ri1] += lsum_r8;
         }
 
-        // ══ GEMM-II: O += P @ V  (manual, like Stage 8) ══
+        // ══ GEMM-II: O += P @ V ══
         {
-            half_t* sP_base = smem.sP.data();
-            int lane_id_g2 = tid % 32;
-            int warp_id_g2 = tid / 32;
-            int r0_g2 = lane_id_g2 / 4;
-            int r8_g2 = r0_g2 + 8;
-            int c0_g2 = (lane_id_g2 % 4) * 2;
-            int c1_g2 = c0_g2 + 1;
-
-            // Store P to smem
+            // Re-interpret register-resident softmax results as an A operand fragment
+            auto rP = make_tensor(recast<half_t>(rS.data()), 
+                                  partition_fragment_A(tiled_mma, Shape<Int<BR>, Int<BC>>{}).layout());
             CUTE_UNROLL
-            for (int mi = 0; mi < size<1>(rS); mi++) {
-                CUTE_UNROLL
-                for (int ni = 0; ni < size<2>(rS); ni++) {
-                    int row0 = warp_id_g2 * 16 + mi * (NWARP * 16) + r0_g2;
-                    int row8 = warp_id_g2 * 16 + mi * (NWARP * 16) + r8_g2;
-                    int col0 = ni * 8 + c0_g2;
-                    int col1 = ni * 8 + c1_g2;
-
-                    sP_base[row0 * BC + col0] = __float2half(rS(0, mi, ni));
-                    sP_base[row0 * BC + col1] = __float2half(rS(1, mi, ni));
-                    sP_base[row8 * BC + col0] = __float2half(rS(2, mi, ni));
-                    sP_base[row8 * BC + col1] = __float2half(rS(3, mi, ni));
-                }
-            }
-            __syncthreads();
-
-            // Manual GEMM-II using mma_m16n8k16 PTX, reading V with plain indexing
-            // V is stored in smem with SmemLayoutKV (swizzled). We need to read it
-            // with the correct swizzled addressing. Instead, store V to sP area
-            // temporarily? No — just use the raw sV data with manual swizzle-aware reads.
-            //
-            // Actually, the simplest correct approach: do GEMM-II through the
-            // MMA partitioning but with V stored in a plain (non-swizzled) layout.
-            // Since V is in swizzled smem, we need to copy it out or use a compatible layout.
-            //
-            // Simplest fix: use wmma-style manual MMA accumulation.
-
-            // P is [BR, BC] row-major in sP_base (plain layout)
-            // V is [BC, D] in sV_ptr with SmemLayoutKV (swizzled)
-            // O is [BR, D] in registers (rO)
-            //
-            // We want O += P @ V, i.e. O[i,j] += sum_k P[i,k] * V[k,j]
-            //
-            // Use mma.m16n8k16: A=P (row-major 16x16), B=V^T (col-major 16x8)
-            // But V is row-major [BC,D], so V^T is col-major [D,BC] — 
-            // for B operand we need col-major, meaning we read V rows as B columns.
-
-            // For each warp: covers 16 rows of O (warp_id_g2 * 16)
-            // and iterates over D in groups of 8 columns (4 mma calls for D=64)
-            // K-reduction is over BC=64, in chunks of 16
-
-            int base_row_g2 = warp_id_g2 * 16;
-
-            // O accumulators for this warp's 16 rows × 64 cols
-            // We have size<2>(rO) groups of 8 columns
-            // But rO is partitioned by CuTe... we need to manually accumulate
-            // and then add back to rO.
-
-            // Actually, let's just do the whole GEMM-II manually and accumulate
-            // directly into a local array, then merge with rO.
-
-        
-            // Wait — D=64 means 8 col-groups of 8, so we need [8][4]
-            float o_acc[8][4];
-            for (int g = 0; g < 8; g++)
-                o_acc[g][0] = o_acc[g][1] = o_acc[g][2] = o_acc[g][3] = 0.0f;
-
-            for (int kk = 0; kk < BC / 16; kk++) {
-                // Load A (P): 16x16 from sP_base, row-major, stride=BC
-                // ldmatrix.x4 loads from row-major: each of 16 threads loads one row
-                uint32_t a0, a1, a2, a3;
-                {
-                    int row_in_tile = lane_id_g2 % 16;
-                    int sub = lane_id_g2 / 16;  // 0 or 1
-                    const half_t* addr = &sP_base[(base_row_g2 + row_in_tile) * BC + kk * 16 + sub * 8];
-                    uint32_t saddr = static_cast<uint32_t>(__cvta_generic_to_shared(addr));
-                    asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
-                                 : "=r"(a0), "=r"(a1), "=r"(a2), "=r"(a3) : "r"(saddr));
-                }
-
-                for (int dc = 0; dc < 8; dc++) {
-                    // Load B (V^T): need col-major 16x8
-                    // V is [BC, D] row-major in swizzled smem. 
-                    // We need V[kk*16 + row, dc*8 + col] but with swizzle.
-                    // To avoid dealing with swizzle, read V element-by-element 
-                    // into registers... but that's slow.
-                    //
-                    // Better: read V from smem using CuTe's layout to get correct addressing.
-                    // We can compute the swizzled offset manually.
-
-                    // For ldmatrix.x2.trans: each lane provides a row address.
-                    // lane_id%8 selects which of 8 rows, (lane_id/8)%2 selects half.
-                    // We need V[kk*16 + k_row, dc*8 ... dc*8+7]
-                    uint32_t vb0, vb1;
-                    {
-                        int k_row_0 = kk * 16 + (lane_id_g2 % 8) + ((lane_id_g2 / 8) % 2) * 8;
-                        // Compute swizzled smem offset for V[k_row_0, dc*8]
-                        // SmemLayoutKV is tile_to_shape of composition(Swizzle<3,3,3>{}, Layout<Shape<_8,_64>, Stride<_64,_1>>)
-                        // to Shape<64,64>.
-                        // The base atom is 8 rows × 64 cols. Tiling to 64×64 means 8 row-tiles.
-                        // Within each atom: offset = row*64 + col, then swizzle XORs bits.
-                        // For Swizzle<3,3,3>: bits [6,7,8] of offset XOR with bits [3,4,5]
-                        int atom_row = k_row_0 % 8;
-                        int atom_tile = k_row_0 / 8;
-                        int base_offset = atom_row * 64 + dc * 8;
-                        // Swizzle<B=3,M=3,S=3>: XOR bits [B+M..B+M+S-1] = [6..8] with [B..B+M-1] = [3..5]
-                        int hi_bits = (base_offset >> 6) & 0x7; // bits 6,7,8
-                        int lo_bits = (base_offset >> 3) & 0x7; // bits 3,4,5
-                        int swizzled_lo = lo_bits ^ hi_bits;
-                        int swizzled_offset = (base_offset & ~(0x7 << 3)) | (swizzled_lo << 3);
-                        int final_offset = atom_tile * (8 * 64) + swizzled_offset;
-
-                        const half_t* v_addr = sV_ptr + final_offset;
-                        uint32_t vsaddr = static_cast<uint32_t>(__cvta_generic_to_shared(v_addr));
-                        asm volatile("ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {%0,%1}, [%2];\n"
-                                     : "=r"(vb0), "=r"(vb1) : "r"(vsaddr));
-                    }
-
-                    asm volatile(
-                        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
-                        "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%10,%11,%12,%13};\n"
-                        : "=f"(o_acc[dc][0]), "=f"(o_acc[dc][1]),
-                          "=f"(o_acc[dc][2]), "=f"(o_acc[dc][3])
-                        : "r"(a0), "r"(a1), "r"(a2), "r"(a3),
-                          "r"(vb0), "r"(vb1),
-                          "f"(o_acc[dc][0]), "f"(o_acc[dc][1]),
-                          "f"(o_acc[dc][2]), "f"(o_acc[dc][3]));
-                }
+            for (int i = 0; i < size(rS); i++) {
+                float val = rS(i);
+                reinterpret_cast<half_t*>(rP.data())[i] = __float2half(val);
             }
 
-            // Merge o_acc back into rO
-            // o_acc[dc][0..3] maps to rows (base_row_g2 + mma_r0, mma_r8) and cols (dc*8 + c0, c1)
-            // rO has shape (4, MMA_M, MMA_N_d) where MMA_N_d = D/8 = 8
-            // For the current warp (warp_id_g2), the mi index tells which 16-row block
-            // With Shape<_8,_1,_1> thread layout, each warp handles one 16-row block
-            // so there's exactly one mi value per warp (the warp IS the mi).
-            // Actually with 8 warps and BR=128, we have 128/16 = 8 blocks, one per warp.
-            // So mi for this warp = 0 (since each warp only has 1 M-tile in its partition).
-            // Wait — CuTe partitions across warps, so each warp's rO slice has mi=0..?(kMmaM-1)
-            // With 8 warps along M and BR=128: 128/(8*16) = 1, so kMmaM = 1, mi is always 0.
+            auto smem_tiled_copy_V = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
+            auto smem_thr_copy_V   = smem_tiled_copy_V.get_thread_slice(tid);
+            auto tSsV = smem_thr_copy_V.partition_S(sV_cur);
+            auto rV   = partition_fragment_B(tiled_mma, Shape<Int<BC>, Int<D>>{});
+            auto tSrV_copy = smem_thr_copy_V.retile_D(rV);
 
-            // rO(mma_elem, mi=0, ni=dc) for this thread
-            // mma_elem 0,1 = row r0, cols c0,c1; mma_elem 2,3 = row r8, cols c0,c1
             CUTE_UNROLL
-            for (int dc = 0; dc < 8; dc++) {
-                rO(0, 0, dc) += o_acc[dc][0];
-                rO(1, 0, dc) += o_acc[dc][1];
-                rO(2, 0, dc) += o_acc[dc][2];
-                rO(3, 0, dc) += o_acc[dc][3];
+            for (int k = 0; k < size<2>(rP); k++) {
+                copy(smem_tiled_copy_V, tSsV(_, _, k), tSrV_copy(_, _, k));
+                gemm(tiled_mma, rP(_, _, k), rV(_, _, k), rO);
             }
         }
         __syncthreads();
@@ -2171,7 +2039,7 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
 
     // Write O to global memory
     int lane_id = tid % 32;
-    int wr = tid / 32; // row warp
+    int wr = tid / 32;
     int mma_r0 = lane_id / 4;
     int mma_r8 = mma_r0 + 8;
     int mma_c0 = (lane_id % 4) * 2;
@@ -2183,20 +2051,15 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
         for (int ni = 0; ni < size<2>(rO); ni++) {
             int row0 = q_start + wr * 16 + mi * 128 + mma_r0;
             int row8 = q_start + wr * 16 + mi * 128 + mma_r8;
-            int col  = ni * 8 + mma_c0;
+            int col0 = ni * 8 + mma_c0;
             int col1 = ni * 8 + mma_c1;
 
-            if (row0 < N && col < D)
-                gO_ptr[offset + row0 * D + col] = __float2half(rO(0, mi, ni));
-            if (row0 < N && col1 < D)
-                gO_ptr[offset + row0 * D + col1] = __float2half(rO(1, mi, ni));
-            if (row8 < N && col < D)
-                gO_ptr[offset + row8 * D + col]  = __float2half(rO(2, mi, ni));
-            if (row8 < N && col1 < D)
-                gO_ptr[offset + row8 * D + col1] = __float2half(rO(3, mi, ni));
+            if (row0 < N && col0 < D) gO_ptr[offset + row0 * D + col0] = __float2half(rO(0, mi, ni));
+            if (row0 < N && col1 < D) gO_ptr[offset + row0 * D + col1] = __float2half(rO(1, mi, ni));
+            if (row8 < N && col0 < D) gO_ptr[offset + row8 * D + col0] = __float2half(rO(2, mi, ni));
+            if (row8 < N && col1 < D) gO_ptr[offset + row8 * D + col1] = __float2half(rO(3, mi, ni));
         }
     }
-
 }
 
 // ── Launcher (extern "C" linkage for main file) ──
