@@ -117,7 +117,7 @@ __device__ __forceinline__ void mma_m16n8k16_f16_f32(
 //  S, P are [N, N] — materialized fully in HBM.
 // ============================================================
 
-__global__ void naive_matmul_qk(const float* Q, const float* K, float* S,
+__global__ void naive_matmul_qk(const half* Q, const half* K, half* S,
                                 int N, int d, float scale) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -125,22 +125,22 @@ __global__ void naive_matmul_qk(const float* Q, const float* K, float* S,
 
     float sum = 0.0f;
     for (int k = 0; k < d; k++)
-        sum += Q[row * d + k] * K[col * d + k];
-    S[row * N + col] = sum * scale;
+        sum += __half2float(Q[row * d + k]) * __half2float(K[col * d + k]);
+    S[row * N + col] = __float2half(sum * scale);
 }
 
-__global__ void naive_softmax(const float* S, float* P, int N) {
+__global__ void naive_softmax(const half* S, half* P, int N) {
     int row = blockIdx.x;
     if (row >= N) return;
 
     extern __shared__ float sdata[];
-    const float* S_row = S + row * N;
-    float* P_row = P + row * N;
+    const half* S_row = S + row * N;
+    half* P_row = P + row * N;
 
     // Find row max
     float local_max = -INFINITY;
     for (int j = threadIdx.x; j < N; j += blockDim.x)
-        local_max = fmaxf(local_max, S_row[j]);
+        local_max = fmaxf(local_max, __half2float(S_row[j]));
     sdata[threadIdx.x] = local_max;
     __syncthreads();
     for (int s = blockDim.x / 2; s > 0; s >>= 1) {
@@ -154,8 +154,12 @@ __global__ void naive_softmax(const float* S, float* P, int N) {
     // Exp and sum
     float local_sum = 0.0f;
     for (int j = threadIdx.x; j < N; j += blockDim.x) {
-        float val = expf(S_row[j] - row_max);
-        P_row[j] = val;
+        float val = expf(__half2float(S_row[j]) - row_max);
+        sdata[threadIdx.x + blockDim.x] = val; // Temporary store in shared if needed? No, let's just recompute or use more smem.
+        // Actually, we can store it in P_row temporarily as float? No, P_row is half.
+        // Let's just re-read or use more shared memory.
+        // For naive, let's just write to P_row as half.
+        P_row[j] = __float2half(val);
         local_sum += val;
     }
     sdata[threadIdx.x] = local_sum;
@@ -170,10 +174,10 @@ __global__ void naive_softmax(const float* S, float* P, int N) {
 
     // Normalize
     for (int j = threadIdx.x; j < N; j += blockDim.x)
-        P_row[j] /= row_sum;
+        P_row[j] = __float2half(__half2float(P_row[j]) / row_sum);
 }
 
-__global__ void naive_matmul_pv(const float* P, const float* V, float* O,
+__global__ void naive_matmul_pv(const half* P, const half* V, half* O,
                                 int N, int d) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -181,12 +185,12 @@ __global__ void naive_matmul_pv(const float* P, const float* V, float* O,
 
     float sum = 0.0f;
     for (int k = 0; k < N; k++)
-        sum += P[row * N + k] * V[k * d + col];
-    O[row * d + col] = sum;
+        sum += __half2float(P[row * N + k]) * __half2float(V[k * d + col]);
+    O[row * d + col] = __float2half(sum);
 }
 
-void launch_naive(const float* d_Q, const float* d_K, const float* d_V,
-                  float* d_O, float* d_S, float* d_P,
+void launch_naive(const half* d_Q, const half* d_K, const half* d_V,
+                  half* d_O, half* d_S, half* d_P,
                   int B_nh, int N, int d) {
     float scale = 1.0f / sqrtf((float)d);
     dim3 blk(16, 16);
@@ -195,10 +199,10 @@ void launch_naive(const float* d_Q, const float* d_K, const float* d_V,
     int smem = 256 * sizeof(float);
 
     for (int bh = 0; bh < B_nh; bh++) {
-        const float* Q_ptr = d_Q + bh * N * d;
-        const float* K_ptr = d_K + bh * N * d;
-        const float* V_ptr = d_V + bh * N * d;
-        float* O_ptr       = d_O + bh * N * d;
+        const half* Q_ptr = d_Q + bh * N * d;
+        const half* K_ptr = d_K + bh * N * d;
+        const half* V_ptr = d_V + bh * N * d;
+        half* O_ptr       = d_O + bh * N * d;
 
         naive_matmul_qk<<<grid_qk, blk>>>(Q_ptr, K_ptr, d_S, N, d, scale);
         naive_softmax<<<N, 256, smem>>>(d_S, d_P, N);
@@ -214,10 +218,10 @@ void launch_naive(const float* d_Q, const float* d_K, const float* d_V,
 //  Block: (BR,)  =  32 threads
 // ============================================================
 
-__global__ void flash_fused_v1(const float* __restrict__ Q,
-                               const float* __restrict__ K,
-                               const float* __restrict__ V,
-                               float* __restrict__ O,
+__global__ void flash_fused_v1(const half* __restrict__ Q,
+                               const half* __restrict__ K,
+                               const half* __restrict__ V,
+                               half* __restrict__ O,
                                int N, int d, float scale) {
     int bh      = blockIdx.y;
     int q_tile  = blockIdx.x;
@@ -246,8 +250,8 @@ __global__ void flash_fused_v1(const float* __restrict__ Q,
         for (int i = tid; i < S1_BC * d; i += S1_BR) {
             int r = i / d, c = i % d;
             int gr = kv_start + r;
-            sK[i] = (gr < N) ? K[offset + gr * d + c] : 0.0f;
-            sV[i] = (gr < N) ? V[offset + gr * d + c] : 0.0f;
+            sK[i] = (gr < N) ? __half2float(K[offset + gr * d + c]) : 0.0f;
+            sV[i] = (gr < N) ? __half2float(V[offset + gr * d + c]) : 0.0f;
         }
         __syncthreads();
 
@@ -260,7 +264,7 @@ __global__ void flash_fused_v1(const float* __restrict__ Q,
                 if (kv_start + c >= N) { P_local[c] = -INFINITY; continue; }
                 float dot = 0.0f;
                 for (int k = 0; k < d; k++)
-                    dot += Q[offset + my_row * d + k] * sK[c * d + k];
+                    dot += __half2float(Q[offset + my_row * d + k]) * sK[c * d + k];
                 dot *= scale;
                 P_local[c] = dot;
                 m_j = fmaxf(m_j, dot);
@@ -299,12 +303,12 @@ __global__ void flash_fused_v1(const float* __restrict__ Q,
     // Final normalization and write back
     if (my_row < N) {
         for (int k = 0; k < d; k++)
-            O[offset + my_row * d + k] = O_row[k] / l;
+            O[offset + my_row * d + k] = __float2half(O_row[k] / l);
     }
 }
 
-void launch_flash_v1(const float* d_Q, const float* d_K, const float* d_V,
-                     float* d_O, int B_nh, int N, int d) {
+void launch_flash_v1(const half* d_Q, const half* d_K, const half* d_V,
+                     half* d_O, int B_nh, int N, int d) {
     int Tr = (N + S1_BR - 1) / S1_BR;
     dim3 grid(Tr, B_nh);
     dim3 block(S1_BR);
@@ -322,10 +326,10 @@ void launch_flash_v1(const float* d_Q, const float* d_K, const float* d_V,
 //  Block: (128,)
 // ============================================================
 
-__global__ void flash_tiled_v2(const float* __restrict__ Q,
-                               const float* __restrict__ K,
-                               const float* __restrict__ V,
-                               float* __restrict__ O,
+__global__ void flash_tiled_v2(const half* __restrict__ Q,
+                               const half* __restrict__ K,
+                               const half* __restrict__ V,
+                               half* __restrict__ O,
                                int N, int d, float scale) {
     const int BR = S2_BR;
     const int BC = S2_BC;
@@ -350,7 +354,7 @@ __global__ void flash_tiled_v2(const float* __restrict__ Q,
     for (int i = tid; i < BR * d; i += S2_BLK) {
         int r = i / d, c = i % d;
         int gr = q_start + r;
-        sQ[i] = (gr < N) ? Q[offset + gr * d + c] : 0.0f;
+        sQ[i] = (gr < N) ? __half2float(Q[offset + gr * d + c]) : 0.0f;
     }
     // Init accumulators
     for (int i = tid; i < BR * d; i += S2_BLK)
@@ -370,8 +374,8 @@ __global__ void flash_tiled_v2(const float* __restrict__ Q,
         for (int i = tid; i < BC * d; i += S2_BLK) {
             int r = i / d, c = i % d;
             int gr = kv_start + r;
-            sK[i] = (gr < N) ? K[offset + gr * d + c] : 0.0f;
-            sV[i] = (gr < N) ? V[offset + gr * d + c] : 0.0f;
+            sK[i] = (gr < N) ? __half2float(K[offset + gr * d + c]) : 0.0f;
+            sV[i] = (gr < N) ? __half2float(V[offset + gr * d + c]) : 0.0f;
         }
         __syncthreads();
 
@@ -445,12 +449,12 @@ __global__ void flash_tiled_v2(const float* __restrict__ Q,
         int r = i / d, c = i % d;
         int gr = q_start + r;
         if (gr < N)
-            O[offset + gr * d + c] = sO[i] / row_l[r];
+            O[offset + gr * d + c] = __float2half(sO[i] / row_l[r]);
     }
 }
 
-void launch_flash_v2(const float* d_Q, const float* d_K, const float* d_V,
-                     float* d_O, int B_nh, int N, int d) {
+void launch_flash_v2(const half* d_Q, const half* d_K, const half* d_V,
+                     half* d_O, int B_nh, int N, int d) {
     int Tr = (N + S2_BR - 1) / S2_BR;
     dim3 grid(Tr, B_nh);
     dim3 block(S2_BLK);
@@ -473,7 +477,7 @@ void launch_flash_v2(const float* d_Q, const float* d_K, const float* d_V,
 __global__ void flash_wmma_v3(const half* __restrict__ Q,
                               const half* __restrict__ K,
                               const half* __restrict__ V,
-                              float* __restrict__ O,
+                              half* __restrict__ O,
                               int N, float scale) {
     const int BR = S3_BR;   // 32
     const int BC = S3_BC;   // 32
@@ -656,12 +660,12 @@ __global__ void flash_wmma_v3(const half* __restrict__ Q,
         int r = i / D, c = i % D;
         int gr = q_start + r;
         if (gr < N)
-            O[offset + gr * D + c] = sO[i];
+            O[offset + gr * D + c] = __float2half(sO[i]);
     }
 }
 
 void launch_flash_v3(const half* d_Q, const half* d_K, const half* d_V,
-                     float* d_O, int B_nh, int N) {
+                     half* d_O, int B_nh, int N) {
     int Tr = (N + S3_BR - 1) / S3_BR;
     dim3 grid(Tr, B_nh);
     dim3 block(S3_BLK);
@@ -698,7 +702,7 @@ void launch_flash_v3(const half* d_Q, const half* d_K, const half* d_V,
 __global__ void flash_wmma_v4(const half* __restrict__ Q,
                               const half* __restrict__ K,
                               const half* __restrict__ V,
-                              float* __restrict__ O,
+                              half* __restrict__ O,
                               int N, float scale) {
     const int BR = S45_BR, BC = S45_BC, D = HEAD_DIM;
     int bh = blockIdx.y, q_tile = blockIdx.x;
@@ -807,12 +811,12 @@ __global__ void flash_wmma_v4(const half* __restrict__ Q,
     // Normalize and write
     for (int i = tid; i < BR * D; i += S45_BLK) {
         int r = i / D, c = i % D, gr = q_start + r;
-        if (gr < N) O[offset + gr*D + c] = sO[i] / row_l[r];
+        if (gr < N) O[offset + gr*D + c] = __float2half(sO[i] / row_l[r]);
     }
 }
 
 void launch_flash_v4(const half* d_Q, const half* d_K, const half* d_V,
-                     float* d_O, int B_nh, int N) {
+                     half* d_O, int B_nh, int N) {
     dim3 grid((N + S45_BR - 1) / S45_BR, B_nh);
     dim3 block(S45_BLK);
     // smem: sQ+sK+sV+sP (each 64x64 half=8KB each) + sS+sO (64x64 fp32=16KB each) + row_m/l
@@ -853,7 +857,7 @@ void launch_flash_v4(const half* d_Q, const half* d_K, const half* d_V,
 __global__ void flash_wmma_v5(const half* __restrict__ Q,
                               const half* __restrict__ K,
                               const half* __restrict__ V,
-                              float* __restrict__ O,
+                              half* __restrict__ O,
                               int N, float scale) {
     const int BR = S45_BR, BC = S45_BC, D = HEAD_DIM;
     int bh = blockIdx.y, q_tile = blockIdx.x;
@@ -980,12 +984,12 @@ __global__ void flash_wmma_v5(const half* __restrict__ Q,
     // FA-2: single division at the end — O = O_raw / l_final
     for (int i = tid; i < BR * D; i += S45_BLK) {
         int r = i / D, c = i % D, gr = q_start + r;
-        if (gr < N) O[offset + gr*D + c] = sO[i] / row_l[r];
+        if (gr < N) O[offset + gr*D + c] = __float2half(sO[i] / row_l[r]);
     }
 }
 
 void launch_flash_v5(const half* d_Q, const half* d_K, const half* d_V,
-                     float* d_O, int B_nh, int N) {
+                     half* d_O, int B_nh, int N) {
     dim3 grid((N + S45_BR - 1) / S45_BR, B_nh);
     dim3 block(S45_BLK);
     // smem: sQ+sK+sV+sP (each 64x64 half=8KB each) + sS+sO (64x64 fp32=16KB each) + row_m/l
@@ -1019,7 +1023,7 @@ void launch_flash_v5(const half* d_Q, const half* d_K, const half* d_V,
 __global__ void flash_wmma_v6(const half* __restrict__ Q,
                               const half* __restrict__ K,
                               const half* __restrict__ V,
-                              float* __restrict__ O,
+                              half* __restrict__ O,
                               int N, float scale) {
     const int BR = S45_BR, BC = S45_BC, D = HEAD_DIM;
     int bh = blockIdx.y, q_tile = blockIdx.x;
@@ -1204,12 +1208,12 @@ __global__ void flash_wmma_v6(const half* __restrict__ Q,
     // ── Final: O = O_raw / l ──
     for (int i = tid; i < BR * D; i += S45_BLK) {
         int r = i / D, c = i % D, gr = q_start + r;
-        if (gr < N) O[offset + gr*D + c] = sO[i] / row_l[r];
+        if (gr < N) O[offset + gr*D + c] = __float2half(sO[i] / row_l[r]);
     }
 }
 
 void launch_flash_v6(const half* d_Q, const half* d_K, const half* d_V,
-                     float* d_O, int B_nh, int N) {
+                     half* d_O, int B_nh, int N) {
     dim3 grid((N + S45_BR - 1) / S45_BR, B_nh);
     dim3 block(S45_BLK);
 
@@ -1247,7 +1251,7 @@ void launch_flash_v6(const half* d_Q, const half* d_K, const half* d_V,
 __global__ void flash_wmma_v7(const half* __restrict__ Q,
                               const half* __restrict__ K,
                               const half* __restrict__ V,
-                              float* __restrict__ O,
+                              half* __restrict__ O,
                               int N, float scale) {
     const int BR = S7_BR, BC = S7_BC, D = S7_D;
     const int D_PAD = S7_D_PAD;
@@ -1399,12 +1403,12 @@ __global__ void flash_wmma_v7(const half* __restrict__ Q,
 
     for (int i = tid; i < BR * D; i += S45_BLK) {
         int r = i / D, c = i % D, gr = q_start + r;
-        if (gr < N) O[offset + gr*D + c] = sO[r * D_PAD + c] / row_l[r];
+        if (gr < N) O[offset + gr*D + c] = __float2half(sO[r * D_PAD + c] / row_l[r]);
     }
 }
 
 void launch_flash_v7(const half* d_Q, const half* d_K, const half* d_V,
-                     float* d_O, int B_nh, int N) {
+                     half* d_O, int B_nh, int N) {
     dim3 grid((N + S7_BR - 1) / S7_BR, B_nh);
     dim3 block(S45_BLK);
     // Corrected Smem calculation: sQ + 2*sK + 2*sV + sP (half) + sS + sO + m + l (float)
@@ -1429,7 +1433,7 @@ void launch_flash_v7(const half* d_Q, const half* d_K, const half* d_V,
 __global__ void flash_mma_v8(const half* __restrict__ Q,
                              const half* __restrict__ K,
                              const half* __restrict__ V,
-                             float* __restrict__ O,
+                             half* __restrict__ O,
                              int N, float scale) {
     const int BR = S7_BR, BC = S7_BC, D = S7_D;
     const int D_PAD = S7_D_PAD, BC_PAD = S7_BC_PAD;
@@ -1660,12 +1664,12 @@ __global__ void flash_mma_v8(const half* __restrict__ Q,
 
     for (int i = tid; i < BR * D; i += S45_BLK) {
         int r = i / D, c = i % D, gr = q_start + r;
-        if (gr < N) O[offset + gr*D + c] = sO[r*D_PAD + c] / row_l[r];
+        if (gr < N) O[offset + gr*D + c] = __float2half(sO[r*D_PAD + c] / row_l[r]);
     }
 }
 
 void launch_flash_v8(const half* d_Q, const half* d_K, const half* d_V,
-                     float* d_O, int B_nh, int N) {
+                     half* d_O, int B_nh, int N) {
     dim3 grid((N + S7_BR - 1) / S7_BR, B_nh);
     dim3 block(S45_BLK);
     size_t smem = (size_t)(S7_BR * S7_D_PAD + 2 * S7_BC * S7_D_PAD
@@ -1789,7 +1793,7 @@ __global__ void __launch_bounds__(BLK, 1)
 flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
                      const half_t* __restrict__ gK_ptr,
                      const half_t* __restrict__ gV_ptr,
-                     float* __restrict__        gO_ptr,
+                     half_t* __restrict__        gO_ptr,
                      int N, float scale) {
     int bh      = blockIdx.y;
     int q_tile  = blockIdx.x;
@@ -2183,13 +2187,13 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
             int col1 = ni * 8 + mma_c1;
 
             if (row0 < N && col < D)
-                gO_ptr[offset + row0 * D + col] = rO(0, mi, ni);   // mi not 0
+                gO_ptr[offset + row0 * D + col] = cast<half_t>(rO(0, mi, ni));
             if (row0 < N && col1 < D)
-                gO_ptr[offset + row0 * D + col1] = rO(1, mi, ni);
+                gO_ptr[offset + row0 * D + col1] = cast<half_t>(rO(1, mi, ni));
             if (row8 < N && col < D)
-                gO_ptr[offset + row8 * D + col]  = rO(2, mi, ni);
+                gO_ptr[offset + row8 * D + col]  = cast<half_t>(rO(2, mi, ni));
             if (row8 < N && col1 < D)
-                gO_ptr[offset + row8 * D + col1] = rO(3, mi, ni);
+                gO_ptr[offset + row8 * D + col1] = cast<half_t>(rO(3, mi, ni));
         }
     }
 
@@ -2198,7 +2202,7 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
 // ── Launcher (extern "C" linkage for main file) ──
 extern "C"
 void launch_flash_v9(const half* d_Q, const half* d_K, const half* d_V,
-                     float* d_O, int B_nh, int N) {
+                     half* d_O, int B_nh, int N) {
     dim3 grid((N + BR - 1) / BR, B_nh);
     dim3 block(BLK);
     size_t smem = sizeof(SharedStorage);
@@ -2208,7 +2212,7 @@ void launch_flash_v9(const half* d_Q, const half* d_K, const half* d_V,
         reinterpret_cast<const half_t*>(d_Q),
         reinterpret_cast<const half_t*>(d_K),
         reinterpret_cast<const half_t*>(d_V),
-        d_O, N, 1.0f / sqrtf((float)D));
+        reinterpret_cast<half_t*>(d_O), N, 1.0f / sqrtf((float)D));
 }
 
 
@@ -2231,18 +2235,19 @@ __global__ void half2float_kernel(const half* src, float* dst, int n) {
 //  Verification: compare two float arrays
 // ============================================================
 
-float max_abs_error(const float* ref, const float* test, int n) {
+float max_abs_error(const float* ref, const half* test, int n) {
     float mx = 0.0f;
     for (int i = 0; i < n; i++)
-        mx = fmaxf(mx, fabsf(ref[i] - test[i]));
+        mx = fmaxf(mx, fabsf(ref[i] - __half2float(test[i])));
     return mx;
 }
 
-float mean_rel_error(const float* ref, const float* test, int n) {
+float mean_rel_error(const float* ref, const half* test, int n) {
     double sum = 0.0;
     for (int i = 0; i < n; i++) {
+        float val = __half2float(test[i]);
         float denom = fmaxf(fabsf(ref[i]), 1e-6f);
-        sum += fabsf(ref[i] - test[i]) / denom;
+        sum += fabsf(ref[i] - val) / denom;
     }
     return (float)(sum / n);
 }
@@ -2288,59 +2293,46 @@ int main(int argc, char** argv) {
         printf("------------------------------------------------------------\n");
 
         // ----- Allocate host memory -----
-        float* h_Q = (float*)malloc(qkv_bytes);
-        float* h_K = (float*)malloc(qkv_bytes);
-        float* h_V = (float*)malloc(qkv_bytes);
+        size_t qkv_half_bytes = total_elems * sizeof(half);
+        half* h_Q = (half*)malloc(qkv_half_bytes);
+        half* h_K = (half*)malloc(qkv_half_bytes);
+        half* h_V = (half*)malloc(qkv_half_bytes);
 
-        // Init with small random values (for numerical stability)
+        // Init with small random values
         srand(42);
         for (long i = 0; i < total_elems; i++) {
-            h_Q[i] = ((float)rand() / RAND_MAX - 0.5f) * 0.1f;
-            h_K[i] = ((float)rand() / RAND_MAX - 0.5f) * 0.1f;
-            h_V[i] = ((float)rand() / RAND_MAX - 0.5f) * 0.1f;
+            float val_q = ((float)rand() / RAND_MAX - 0.5f) * 0.1f;
+            float val_k = ((float)rand() / RAND_MAX - 0.5f) * 0.1f;
+            float val_v = ((float)rand() / RAND_MAX - 0.5f) * 0.1f;
+            h_Q[i] = __float2half(val_q);
+            h_K[i] = __float2half(val_k);
+            h_V[i] = __float2half(val_v);
         }
 
-        // ----- Allocate device memory (float) -----
-        float *d_Q, *d_K, *d_V, *d_O, *d_O_ref;
-        CUDA_CHECK(cudaMalloc(&d_Q, qkv_bytes));
-        CUDA_CHECK(cudaMalloc(&d_K, qkv_bytes));
-        CUDA_CHECK(cudaMalloc(&d_V, qkv_bytes));
-        CUDA_CHECK(cudaMalloc(&d_O, qkv_bytes));
-        CUDA_CHECK(cudaMalloc(&d_O_ref, qkv_bytes));
+        // ----- Allocate device memory (half) -----
+        half *d_Q, *d_K, *d_V, *d_O, *d_O_ref;
+        CUDA_CHECK(cudaMalloc(&d_Q, qkv_half_bytes));
+        CUDA_CHECK(cudaMalloc(&d_K, qkv_half_bytes));
+        CUDA_CHECK(cudaMalloc(&d_V, qkv_half_bytes));
+        CUDA_CHECK(cudaMalloc(&d_O, qkv_half_bytes));
+        CUDA_CHECK(cudaMalloc(&d_O_ref, qkv_half_bytes));
 
-        CUDA_CHECK(cudaMemcpy(d_Q, h_Q, qkv_bytes, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_K, h_K, qkv_bytes, cudaMemcpyHostToDevice));
-        CUDA_CHECK(cudaMemcpy(d_V, h_V, qkv_bytes, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_Q, h_Q, qkv_half_bytes, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_K, h_K, qkv_half_bytes, cudaMemcpyHostToDevice));
+        CUDA_CHECK(cudaMemcpy(d_V, h_V, qkv_half_bytes, cudaMemcpyHostToDevice));
 
         // Intermediate S, P for naive (one batch-head at a time)
-        size_t sp_bytes = (size_t)N * N * sizeof(float);
-        float *d_S, *d_P;
+        size_t sp_bytes = (size_t)N * N * sizeof(half);
+        half *d_S, *d_P;
         CUDA_CHECK(cudaMalloc(&d_S, sp_bytes));
         CUDA_CHECK(cudaMalloc(&d_P, sp_bytes));
 
-        // ----- Allocate device memory (half) for Stage 3 -----
-        size_t qkv_half_bytes = total_elems * sizeof(half);
-        half *d_Qh, *d_Kh, *d_Vh;
-        float *d_O3;  // Stage 3 output in float
-        CUDA_CHECK(cudaMalloc(&d_Qh, qkv_half_bytes));
-        CUDA_CHECK(cudaMalloc(&d_Kh, qkv_half_bytes));
-        CUDA_CHECK(cudaMalloc(&d_Vh, qkv_half_bytes));
-        CUDA_CHECK(cudaMalloc(&d_O3, qkv_bytes));
-
-        // Convert float → half on device
-        int blk256 = 256;
-        int grid_conv = (total_elems + blk256 - 1) / blk256;
-        float2half_kernel<<<grid_conv, blk256>>>(d_Q, d_Qh, total_elems);
-        float2half_kernel<<<grid_conv, blk256>>>(d_K, d_Kh, total_elems);
-        float2half_kernel<<<grid_conv, blk256>>>(d_V, d_Vh, total_elems);
-        CUDA_CHECK(cudaDeviceSynchronize());
-
         // Host buffers for output comparison
-        float* h_O_ref  = (float*)malloc(qkv_bytes);
-        float* h_O_test = (float*)malloc(qkv_bytes);
+        float* h_O_ref_f = (float*)malloc(total_elems * sizeof(float));
+        half*  h_O_test  = (half*)malloc(qkv_half_bytes);
 
         // ==========================================================
-        //  STAGE 0: Naive
+        //  STAGE 0: Naive (FP16 inputs/outputs, FP32 inner)
         // ==========================================================
         {
             float ms = 0.0f;
@@ -2360,9 +2352,12 @@ int main(int argc, char** argv) {
             double tflops = total_flops / (ms / 1000.0) / 1e12;
             printf("  Stage 0 (Naive 3-kernel) : %8.3f ms  %6.2f TFLOPS\n", ms, tflops);
 
-            // Save reference output
-            CUDA_CHECK(cudaMemcpy(d_O_ref, d_O, qkv_bytes, cudaMemcpyDeviceToDevice));
-            CUDA_CHECK(cudaMemcpy(h_O_ref, d_O, qkv_bytes, cudaMemcpyDeviceToHost));
+            // Save reference output as float for ground truth
+            half* h_O_ref_h = (half*)malloc(qkv_half_bytes);
+            CUDA_CHECK(cudaMemcpy(h_O_ref_h, d_O, qkv_half_bytes, cudaMemcpyDeviceToHost));
+            for (long i = 0; i < total_elems; i++) h_O_ref_f[i] = __half2float(h_O_ref_h[i]);
+            free(h_O_ref_h);
+            CUDA_CHECK(cudaMemcpy(d_O_ref, d_O, qkv_half_bytes, cudaMemcpyDeviceToDevice));
         }
 
         // ==========================================================
@@ -2370,12 +2365,12 @@ int main(int argc, char** argv) {
         // ==========================================================
         {
             float ms = 0.0f;
-            CUDA_CHECK(cudaMemset(d_O, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             for (int r = 0; r < warmup; r++)
                 launch_flash_v1(d_Q, d_K, d_V, d_O, B_nh, N, d);
             CUDA_CHECK(cudaDeviceSynchronize());
 
-            CUDA_CHECK(cudaMemset(d_O, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             CUDA_CHECK(cudaEventRecord(start));
             for (int r = 0; r < iters; r++)
                 launch_flash_v1(d_Q, d_K, d_V, d_O, B_nh, N, d);
@@ -2385,24 +2380,24 @@ int main(int argc, char** argv) {
             ms /= iters;
 
             double tflops = total_flops / (ms / 1000.0) / 1e12;
-            CUDA_CHECK(cudaMemcpy(h_O_test, d_O, qkv_bytes, cudaMemcpyDeviceToHost));
-            float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
-            float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
+            CUDA_CHECK(cudaMemcpy(h_O_test, d_O, qkv_half_bytes, cudaMemcpyDeviceToHost));
+            float mae = max_abs_error(h_O_ref_f, h_O_test, total_elems);
+            float mre = mean_rel_error(h_O_ref_f, h_O_test, total_elems);
             printf("  Stage 1 (Fused 1-thr/row): %8.3f ms  %6.2f TFLOPS  "
                    "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
         }
 
         // ==========================================================
-        //  STAGE 2: Tiled cooperative (fp32)
+        //  STAGE 2: Tiled cooperative (fp16)
         // ==========================================================
         {
             float ms = 0.0f;
-            CUDA_CHECK(cudaMemset(d_O, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             for (int r = 0; r < warmup; r++)
                 launch_flash_v2(d_Q, d_K, d_V, d_O, B_nh, N, d);
             CUDA_CHECK(cudaDeviceSynchronize());
 
-            CUDA_CHECK(cudaMemset(d_O, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             CUDA_CHECK(cudaEventRecord(start));
             for (int r = 0; r < iters; r++)
                 launch_flash_v2(d_Q, d_K, d_V, d_O, B_nh, N, d);
@@ -2412,10 +2407,10 @@ int main(int argc, char** argv) {
             ms /= iters;
 
             double tflops = total_flops / (ms / 1000.0) / 1e12;
-            CUDA_CHECK(cudaMemcpy(h_O_test, d_O, qkv_bytes, cudaMemcpyDeviceToHost));
-            float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
-            float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
-            printf("  Stage 2 (Tiled coop fp32): %8.3f ms  %6.2f TFLOPS  "
+            CUDA_CHECK(cudaMemcpy(h_O_test, d_O, qkv_half_bytes, cudaMemcpyDeviceToHost));
+            float mae = max_abs_error(h_O_ref_f, h_O_test, total_elems);
+            float mre = mean_rel_error(h_O_ref_f, h_O_test, total_elems);
+            printf("  Stage 2 (Tiled coop fp16): %8.3f ms  %6.2f TFLOPS  "
                    "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
         }
 
@@ -2424,24 +2419,24 @@ int main(int argc, char** argv) {
         // ==========================================================
         {
             float ms = 0.0f;
-            CUDA_CHECK(cudaMemset(d_O3, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             for (int r = 0; r < warmup; r++)
-                launch_flash_v3(d_Qh, d_Kh, d_Vh, d_O3, B_nh, N);
+                launch_flash_v3(d_Q, d_K, d_V, d_O, B_nh, N);
             CUDA_CHECK(cudaDeviceSynchronize());
 
-            CUDA_CHECK(cudaMemset(d_O3, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             CUDA_CHECK(cudaEventRecord(start));
             for (int r = 0; r < iters; r++)
-                launch_flash_v3(d_Qh, d_Kh, d_Vh, d_O3, B_nh, N);
+                launch_flash_v3(d_Q, d_K, d_V, d_O, B_nh, N);
             CUDA_CHECK(cudaEventRecord(stop));
             CUDA_CHECK(cudaEventSynchronize(stop));
             CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
             ms /= iters;
 
             double tflops = total_flops / (ms / 1000.0) / 1e12;
-            CUDA_CHECK(cudaMemcpy(h_O_test, d_O3, qkv_bytes, cudaMemcpyDeviceToHost));
-            float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
-            float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
+            CUDA_CHECK(cudaMemcpy(h_O_test, d_O, qkv_half_bytes, cudaMemcpyDeviceToHost));
+            float mae = max_abs_error(h_O_ref_f, h_O_test, total_elems);
+            float mre = mean_rel_error(h_O_ref_f, h_O_test, total_elems);
             printf("  Stage 3 (wmma TC fp16)   : %8.3f ms  %6.2f TFLOPS  "
                    "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
         }
@@ -2451,29 +2446,26 @@ int main(int argc, char** argv) {
         // ==========================================================
         {
             float ms = 0.0f;
-            float* d_O4;
-            CUDA_CHECK(cudaMalloc(&d_O4, qkv_bytes));
-            CUDA_CHECK(cudaMemset(d_O4, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             for (int r = 0; r < warmup; r++)
-                launch_flash_v4(d_Qh, d_Kh, d_Vh, d_O4, B_nh, N);
+                launch_flash_v4(d_Q, d_K, d_V, d_O, B_nh, N);
             CUDA_CHECK(cudaDeviceSynchronize());
 
-            CUDA_CHECK(cudaMemset(d_O4, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             CUDA_CHECK(cudaEventRecord(start));
             for (int r = 0; r < iters; r++)
-                launch_flash_v4(d_Qh, d_Kh, d_Vh, d_O4, B_nh, N);
+                launch_flash_v4(d_Q, d_K, d_V, d_O, B_nh, N);
             CUDA_CHECK(cudaEventRecord(stop));
             CUDA_CHECK(cudaEventSynchronize(stop));
             CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
             ms /= iters;
 
             double tflops = total_flops / (ms / 1000.0) / 1e12;
-            CUDA_CHECK(cudaMemcpy(h_O_test, d_O4, qkv_bytes, cudaMemcpyDeviceToHost));
-            float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
-            float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
+            CUDA_CHECK(cudaMemcpy(h_O_test, d_O, qkv_half_bytes, cudaMemcpyDeviceToHost));
+            float mae = max_abs_error(h_O_ref_f, h_O_test, total_elems);
+            float mre = mean_rel_error(h_O_ref_f, h_O_test, total_elems);
             printf("  Stage 4 (wmma 64x64)     : %8.3f ms  %6.2f TFLOPS  "
                    "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
-            CUDA_CHECK(cudaFree(d_O4));
         }
 
         // ==========================================================
@@ -2481,29 +2473,26 @@ int main(int argc, char** argv) {
         // ==========================================================
         {
             float ms = 0.0f;
-            float* d_O5;
-            CUDA_CHECK(cudaMalloc(&d_O5, qkv_bytes));
-            CUDA_CHECK(cudaMemset(d_O5, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             for (int r = 0; r < warmup; r++)
-                launch_flash_v5(d_Qh, d_Kh, d_Vh, d_O5, B_nh, N);
+                launch_flash_v5(d_Q, d_K, d_V, d_O, B_nh, N);
             CUDA_CHECK(cudaDeviceSynchronize());
 
-            CUDA_CHECK(cudaMemset(d_O5, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             CUDA_CHECK(cudaEventRecord(start));
             for (int r = 0; r < iters; r++)
-                launch_flash_v5(d_Qh, d_Kh, d_Vh, d_O5, B_nh, N);
+                launch_flash_v5(d_Q, d_K, d_V, d_O, B_nh, N);
             CUDA_CHECK(cudaEventRecord(stop));
             CUDA_CHECK(cudaEventSynchronize(stop));
             CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
             ms /= iters;
 
             double tflops = total_flops / (ms / 1000.0) / 1e12;
-            CUDA_CHECK(cudaMemcpy(h_O_test, d_O5, qkv_bytes, cudaMemcpyDeviceToHost));
-            float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
-            float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
+            CUDA_CHECK(cudaMemcpy(h_O_test, d_O, qkv_half_bytes, cudaMemcpyDeviceToHost));
+            float mae = max_abs_error(h_O_ref_f, h_O_test, total_elems);
+            float mre = mean_rel_error(h_O_ref_f, h_O_test, total_elems);
             printf("  Stage 5 (FA-2 deferred l): %8.3f ms  %6.2f TFLOPS  "
                    "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
-            CUDA_CHECK(cudaFree(d_O5));
         }
 
         // ==========================================================
@@ -2511,29 +2500,26 @@ int main(int argc, char** argv) {
         // ==========================================================
         {
             float ms = 0.0f;
-            float* d_O6;
-            CUDA_CHECK(cudaMalloc(&d_O6, qkv_bytes));
-            CUDA_CHECK(cudaMemset(d_O6, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             for (int r = 0; r < warmup; r++)
-                launch_flash_v6(d_Qh, d_Kh, d_Vh, d_O6, B_nh, N);
+                launch_flash_v6(d_Q, d_K, d_V, d_O, B_nh, N);
             CUDA_CHECK(cudaDeviceSynchronize());
 
-            CUDA_CHECK(cudaMemset(d_O6, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             CUDA_CHECK(cudaEventRecord(start));
             for (int r = 0; r < iters; r++)
-                launch_flash_v6(d_Qh, d_Kh, d_Vh, d_O6, B_nh, N);
+                launch_flash_v6(d_Q, d_K, d_V, d_O, B_nh, N);
             CUDA_CHECK(cudaEventRecord(stop));
             CUDA_CHECK(cudaEventSynchronize(stop));
             CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
             ms /= iters;
 
             double tflops = total_flops / (ms / 1000.0) / 1e12;
-            CUDA_CHECK(cudaMemcpy(h_O_test, d_O6, qkv_bytes, cudaMemcpyDeviceToHost));
-            float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
-            float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
+            CUDA_CHECK(cudaMemcpy(h_O_test, d_O, qkv_half_bytes, cudaMemcpyDeviceToHost));
+            float mae = max_abs_error(h_O_ref_f, h_O_test, total_elems);
+            float mre = mean_rel_error(h_O_ref_f, h_O_test, total_elems);
             printf("  Stage 6 (async dbl-buf): %8.3f ms  %6.2f TFLOPS  "
                    "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
-            CUDA_CHECK(cudaFree(d_O6));
         }
 
         // ==========================================================
@@ -2541,60 +2527,53 @@ int main(int argc, char** argv) {
         // ==========================================================
         {
             float ms = 0.0f;
-            float* d_O7;
-            CUDA_CHECK(cudaMalloc(&d_O7, qkv_bytes));
-            CUDA_CHECK(cudaMemset(d_O7, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             for (int r = 0; r < warmup; r++)
-                launch_flash_v7(d_Qh, d_Kh, d_Vh, d_O7, B_nh, N);
+                launch_flash_v7(d_Q, d_K, d_V, d_O, B_nh, N);
             CUDA_CHECK(cudaDeviceSynchronize());
 
-            CUDA_CHECK(cudaMemset(d_O7, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             CUDA_CHECK(cudaEventRecord(start));
             for (int r = 0; r < iters; r++)
-                launch_flash_v7(d_Qh, d_Kh, d_Vh, d_O7, B_nh, N);
+                launch_flash_v7(d_Q, d_K, d_V, d_O, B_nh, N);
             CUDA_CHECK(cudaEventRecord(stop));
             CUDA_CHECK(cudaEventSynchronize(stop));
             CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
             ms /= iters;
 
             double tflops = total_flops / (ms / 1000.0) / 1e12;
-            CUDA_CHECK(cudaMemcpy(h_O_test, d_O7, qkv_bytes, cudaMemcpyDeviceToHost));
-            float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
-            float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
+            CUDA_CHECK(cudaMemcpy(h_O_test, d_O, qkv_half_bytes, cudaMemcpyDeviceToHost));
+            float mae = max_abs_error(h_O_ref_f, h_O_test, total_elems);
+            float mre = mean_rel_error(h_O_ref_f, h_O_test, total_elems);
             printf("  Stage 7 (Smem Padded)   : %8.3f ms  %6.2f TFLOPS  "
                    "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
-            CUDA_CHECK(cudaFree(d_O7));
         }
-
 
         // ==========================================================
         //  STAGE 8: PTX mma.sync + ldmatrix
         // ==========================================================
         {
             float ms = 0.0f;
-            float* d_O8;
-            CUDA_CHECK(cudaMalloc(&d_O8, qkv_bytes));
-            CUDA_CHECK(cudaMemset(d_O8, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             for (int r = 0; r < warmup; r++)
-                launch_flash_v8(d_Qh, d_Kh, d_Vh, d_O8, B_nh, N);
+                launch_flash_v8(d_Q, d_K, d_V, d_O, B_nh, N);
             CUDA_CHECK(cudaDeviceSynchronize());
 
-            CUDA_CHECK(cudaMemset(d_O8, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             CUDA_CHECK(cudaEventRecord(start));
             for (int r = 0; r < iters; r++)
-                launch_flash_v8(d_Qh, d_Kh, d_Vh, d_O8, B_nh, N);
+                launch_flash_v8(d_Q, d_K, d_V, d_O, B_nh, N);
             CUDA_CHECK(cudaEventRecord(stop));
             CUDA_CHECK(cudaEventSynchronize(stop));
             CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
             ms /= iters;
 
             double tflops = total_flops / (ms / 1000.0) / 1e12;
-            CUDA_CHECK(cudaMemcpy(h_O_test, d_O8, qkv_bytes, cudaMemcpyDeviceToHost));
-            float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
-            float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
+            CUDA_CHECK(cudaMemcpy(h_O_test, d_O, qkv_half_bytes, cudaMemcpyDeviceToHost));
+            float mae = max_abs_error(h_O_ref_f, h_O_test, total_elems);
+            float mre = mean_rel_error(h_O_ref_f, h_O_test, total_elems);
             printf("  Stage 8 (PTX mma.sync)  : %8.3f ms  %6.2f TFLOPS  "
                    "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
-            CUDA_CHECK(cudaFree(d_O8));
         }
 
         // ==========================================================
@@ -2602,29 +2581,26 @@ int main(int argc, char** argv) {
         // ==========================================================
         {
             float ms = 0.0f;
-            float* d_O9;
-            CUDA_CHECK(cudaMalloc(&d_O9, qkv_bytes));
-            CUDA_CHECK(cudaMemset(d_O9, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             for (int r = 0; r < warmup; r++)
-                launch_flash_v9(d_Qh, d_Kh, d_Vh, d_O9, B_nh, N);
+                launch_flash_v9(d_Q, d_K, d_V, d_O, B_nh, N);
             CUDA_CHECK(cudaDeviceSynchronize());
 
-            CUDA_CHECK(cudaMemset(d_O9, 0, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
             CUDA_CHECK(cudaEventRecord(start));
             for (int r = 0; r < iters; r++)
-                launch_flash_v9(d_Qh, d_Kh, d_Vh, d_O9, B_nh, N);
+                launch_flash_v9(d_Q, d_K, d_V, d_O, B_nh, N);
             CUDA_CHECK(cudaEventRecord(stop));
             CUDA_CHECK(cudaEventSynchronize(stop));
             CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
             ms /= iters;
 
             double tflops = total_flops / (ms / 1000.0) / 1e12;
-            CUDA_CHECK(cudaMemcpy(h_O_test, d_O9, qkv_bytes, cudaMemcpyDeviceToHost));
-            float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
-            float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
+            CUDA_CHECK(cudaMemcpy(h_O_test, d_O, qkv_half_bytes, cudaMemcpyDeviceToHost));
+            float mae = max_abs_error(h_O_ref_f, h_O_test, total_elems);
+            float mre = mean_rel_error(h_O_ref_f, h_O_test, total_elems);
             printf("  Stage 9 (CuTe FA-2)    : %8.3f ms  %6.2f TFLOPS  "
                    "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
-            CUDA_CHECK(cudaFree(d_O9));
         }
 
         
@@ -2632,13 +2608,11 @@ int main(int argc, char** argv) {
 
         // ----- Cleanup per sequence length -----
         free(h_Q);  free(h_K);  free(h_V);
-        free(h_O_ref);  free(h_O_test);
+        free(h_O_ref_f);  free(h_O_test);
         CUDA_CHECK(cudaFree(d_Q));  CUDA_CHECK(cudaFree(d_K));
         CUDA_CHECK(cudaFree(d_V));  CUDA_CHECK(cudaFree(d_O));
         CUDA_CHECK(cudaFree(d_O_ref));
         CUDA_CHECK(cudaFree(d_S));  CUDA_CHECK(cudaFree(d_P));
-        CUDA_CHECK(cudaFree(d_Qh)); CUDA_CHECK(cudaFree(d_Kh));
-        CUDA_CHECK(cudaFree(d_Vh)); CUDA_CHECK(cudaFree(d_O3));
     }
 
     CUDA_CHECK(cudaEventDestroy(start));
