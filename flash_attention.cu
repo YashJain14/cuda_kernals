@@ -1936,7 +1936,7 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
             auto smem_tiled_copy_K = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_K   = smem_tiled_copy_K.get_thread_slice(tid);
             auto tSsK = smem_thr_copy_K.partition_S(sK_cur);
-            auto tSrK = partition_fragment_B(tiled_mma, Shape<Int<BC>, Int<D>>{});
+            auto tSrK = thr_mma.partition_fragment_B(sK_cur);
             auto tSrK_copy = smem_thr_copy_K.retile_D(tSrK);
 
             CUTE_UNROLL
@@ -2002,24 +2002,28 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
         // ══ GEMM-II: O += P @ V ══
         {
             // Re-interpret register-resident softmax results as an A operand fragment
-            auto rP = make_tensor(recast<half_t>(rS.data()), 
-                                  partition_fragment_A(tiled_mma, Shape<Int<BR>, Int<BC>>{}).layout());
+            // We need a half_t fragment with the same layout as rS (but with half_t elements)
+            auto rP = make_tensor(make_rmem_ptr<half_t>(reinterpret_cast<half_t*>(rS.data())), rS.layout());
+            // Since rS is float and rP is half_t, we need to manually convert and store back
+            // However, operand A for mma is usually expected in specific registers.
+            // For now, let's use a temporary fragment to be safe.
+            auto rP_half = thr_mma.partition_fragment_A(make_tensor(make_smem_ptr(smem.sP.data()), Shape<Int<BR>, Int<BC>>{}));
+            
             CUTE_UNROLL
             for (int i = 0; i < size(rS); i++) {
-                float val = rS(i);
-                reinterpret_cast<half_t*>(rP.data())[i] = __float2half(val);
+                rP_half(i) = __float2half(rS(i));
             }
 
             auto smem_tiled_copy_V = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_V   = smem_tiled_copy_V.get_thread_slice(tid);
             auto tSsV = smem_thr_copy_V.partition_S(sV_cur);
-            auto rV   = partition_fragment_B(tiled_mma, Shape<Int<BC>, Int<D>>{});
+            auto rV   = thr_mma.partition_fragment_B(sV_cur);
             auto tSrV_copy = smem_thr_copy_V.retile_D(rV);
 
             CUTE_UNROLL
-            for (int k = 0; k < size<2>(rP); k++) {
+            for (int k = 0; k < size<2>(rP_half); k++) {
                 copy(smem_tiled_copy_V, tSsV(_, _, k), tSrV_copy(_, _, k));
-                gemm(tiled_mma, rP(_, _, k), rV(_, _, k), rO);
+                gemm(tiled_mma, rP_half(_, _, k), rV(_, _, k), rO);
             }
         }
         __syncthreads();
