@@ -1488,7 +1488,7 @@ __global__ void flash_mma_v8(const half* __restrict__ Q,
     int mma_c0 = (lane_id % 4) * 2;  // col 0,2,4,6
     int mma_c1 = mma_c0 + 1;         // col 1,3,5,7
     // ldmatrix row addressed by each lane
-    int frag_row = lane_id % 16;
+    // int frag_row = lane_id % 16;
 
     for (int j = 0; j < Tc; j++) {
         int cur = j & 1, nxt = 1 - cur;
@@ -1528,7 +1528,7 @@ __global__ void flash_mma_v8(const half* __restrict__ Q,
                 // Load A (Q fragment): ldmatrix.x4 row-major 16x16
                 uint32_t a0, a1, a2, a3;
                 ldmatrix_x4(a0, a1, a2, a3,
-                    &sQ[(wr*16 + frag_row) * D_PAD + kk*16]);
+                    &sQ[(wr*16 + lane_id % 16) * D_PAD + kk*16 + (lane_id / 16) * 8]);
 
                 // 4 col-groups of 8 cols each → 4 mma calls
                 for (int nc = 0; nc < 4; nc++) {
@@ -1613,7 +1613,7 @@ __global__ void flash_mma_v8(const half* __restrict__ Q,
                 // Load A (P fragment): ldmatrix.x4 row-major 16x16
                 uint32_t a0, a1, a2, a3;
                 ldmatrix_x4(a0, a1, a2, a3,
-                    &sP[(base_row + frag_row) * BC_PAD + kk*16]);
+                    &sP[(base_row + lane_id % 16) * BC_PAD + kk*16 + (lane_id / 16) * 8]);
 
                 for (int nc = 0; nc < 4; nc++) {
                     int col_base = wc * 32 + nc * 8;
