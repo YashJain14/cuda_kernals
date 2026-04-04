@@ -2285,7 +2285,7 @@ int main(int argc, char** argv) {
         int N = seq_lens[ci];
         long total_elems = (long)B_nh * N * d;
         double total_flops = 4.0 * B_nh * (double)N * N * d;   // two GEMMs
-        size_t qkv_bytes  = total_elems * sizeof(float);
+     
 
         printf("------------------------------------------------------------\n");
         printf("  Sequence Length N = %d\n", N);
