@@ -2187,13 +2187,13 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
             int col1 = ni * 8 + mma_c1;
 
             if (row0 < N && col < D)
-                gO_ptr[offset + row0 * D + col] = cast<half_t>(rO(0, mi, ni));
+                gO_ptr[offset + row0 * D + col] = __float2half(rO(0, mi, ni));
             if (row0 < N && col1 < D)
-                gO_ptr[offset + row0 * D + col1] = cast<half_t>(rO(1, mi, ni));
+                gO_ptr[offset + row0 * D + col1] = __float2half(rO(1, mi, ni));
             if (row8 < N && col < D)
-                gO_ptr[offset + row8 * D + col]  = cast<half_t>(rO(2, mi, ni));
+                gO_ptr[offset + row8 * D + col]  = __float2half(rO(2, mi, ni));
             if (row8 < N && col1 < D)
-                gO_ptr[offset + row8 * D + col1] = cast<half_t>(rO(3, mi, ni));
+                gO_ptr[offset + row8 * D + col1] = __float2half(rO(3, mi, ni));
         }
     }
 
