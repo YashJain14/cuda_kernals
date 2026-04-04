@@ -1946,8 +1946,8 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
             float lmax_r0 = -INFINITY, lmax_r8 = -INFINITY;
             CUTE_UNROLL
             for (int ni = 0; ni < size<2>(rS); ni++) {
-                lmax_r0 = fmaxf(lmax_r0, fmaxf(rS(0, mi, ni), rS(1, mi, ni)));
-                lmax_r8 = fmaxf(lmax_r8, fmaxf(rS(2, mi, ni), rS(3, mi, ni)));
+                lmax_r0 = fmaxf(lmax_r0, fmaxf(rS(0, 0, ni), rS(1, 0, ni)));
+                lmax_r8 = fmaxf(lmax_r8, fmaxf(rS(2, 0, ni), rS(3, 0, ni)));
             }
             // Cross-thread reduction: threads sharing same row (lane_id%4 varies)
             lmax_r0 = fmaxf(lmax_r0, __shfl_xor_sync(0xffffffff, lmax_r0, 1));
@@ -1976,14 +1976,14 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
             float lsum_r0 = 0.0f, lsum_r8 = 0.0f;
             CUTE_UNROLL
             for (int ni = 0; ni < size<2>(rS); ni++) {
-                float p0 = __expf(rS(0, mi, ni) - m_new_r0);
-                float p1 = __expf(rS(1, mi, ni) - m_new_r0);
-                float p2 = __expf(rS(2, mi, ni) - m_new_r8);
-                float p3 = __expf(rS(3, mi, ni) - m_new_r8);
+                float p0 = __expf(rS(0, 0, ni) - m_new_r0);
+                float p1 = __expf(rS(1, 0, ni) - m_new_r0);
+                float p2 = __expf(rS(2, 0, ni) - m_new_r8);
+                float p3 = __expf(rS(3, 0, ni) - m_new_r8);
                 lsum_r0 += p0 + p1;
                 lsum_r8 += p2 + p3;
-                rS(0, mi, ni) = p0; rS(1, mi, ni) = p1;
-                rS(2, mi, ni) = p2; rS(3, mi, ni) = p3;
+                rS(0, 0, ni) = p0; rS(1, 0, ni) = p1;
+                rS(2, 0, ni) = p2; rS(3, 0, ni) = p3;
             }
             lsum_r0 += __shfl_xor_sync(0xffffffff, lsum_r0, 1);
             lsum_r0 += __shfl_xor_sync(0xffffffff, lsum_r0, 2);
@@ -2013,10 +2013,10 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
                     int col0 = ni * 8 + c0_p;
                     int col1 = ni * 8 + c1_p;
                     
-                    sP_base[row0 * BC + col0] = __float2half(rS(0, mi, ni));
-                    sP_base[row0 * BC + col1] = __float2half(rS(1, mi, ni));
-                    sP_base[row8 * BC + col0] = __float2half(rS(2, mi, ni));
-                    sP_base[row8 * BC + col1] = __float2half(rS(3, mi, ni));
+                    sP_base[row0 * BC + col0] = __float2half(rS(0, 0, ni));
+                    sP_base[row0 * BC + col1] = __float2half(rS(1, 0, ni));
+                    sP_base[row8 * BC + col0] = __float2half(rS(2, 0, ni));
+                    sP_base[row8 * BC + col1] = __float2half(rS(3, 0, ni));
                 }
             }
             __syncthreads();
@@ -2026,15 +2026,9 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
                                          Layout<Shape<Int<BR>, Int<BC>>,
                                                 Stride<Int<BC>, _1>>{});
             
-            // sV_cur is Shape<BC, D>. For GEMM-II we compute P @ V.
-            // In CuTe, the B operand of gemm expects shape (N, K).
-            // We want the inner product over K=BC, and output over N=D.
-            // If we pass sV_cur directly, CuTe binds N=BC, K=D, computing P @ V^T.
-            // We must logically transpose sV_cur to Shape<D, BC> so K=BC, N=D.
-            auto sV_trans = make_tensor(sV_cur.data(), 
-                                        composition(sV_cur.layout(), 
-                                                    Layout<Shape<Int<D>, Int<BC>>, 
-                                                           Stride<_1, Int<D>>>{}));
+            // Logically transpose sV_cur for the B operand (D, BC)
+            // Use CuTe's transpose_obj to handle swizzled layouts correctly
+            auto sV_trans = make_tensor(sV_cur.data(), transpose(sV_cur.layout()));
 
             auto tOrP = thr_mma.partition_fragment_A(sP_tensor);
             auto tOrV = thr_mma.partition_fragment_B(sV_trans);
@@ -2090,13 +2084,13 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
             int col1 = ni * 8 + mma_c1;
 
             if (row0 < N && col < D)
-                gO_ptr[offset + row0 * D + col]  = rO(0, mi, ni);
+                gO_ptr[offset + row0 * D + col] = rO(0, 0, ni);
             if (row0 < N && col1 < D)
-                gO_ptr[offset + row0 * D + col1] = rO(1, mi, ni);
+                gO_ptr[offset + row0 * D + col1] = rO(1, 0, ni);
             if (row8 < N && col < D)
-                gO_ptr[offset + row8 * D + col]  = rO(2, mi, ni);
+                gO_ptr[offset + row8 * D + col]  = rO(2, 0, ni);
             if (row8 < N && col1 < D)
-                gO_ptr[offset + row8 * D + col1] = rO(3, mi, ni);
+                gO_ptr[offset + row8 * D + col1] = rO(3, 0, ni);
         }
     }
 
