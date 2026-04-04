@@ -1744,8 +1744,10 @@ using SmemLayoutKV = decltype(tile_to_shape(SmemLayoutAtom{},
 using MMA_Atom_t = MMA_Atom<SM80_16x8x16_F32F16F16F32_TN>;
 using TiledMMA_t = decltype(make_tiled_mma(
     MMA_Atom_t{},
-    // Thread layout: 4 warps along M, 2 along N
-    Layout<Shape<_4, _2, _1>>{}));
+    // Thread layout: 8 warps along M, 1 along N
+    // This ensures each row is handled by exactly 4 threads (in one warp),
+    // allowing correct in-register softmax reduction across all 64 columns.
+    Layout<Shape<_8, _1, _1>>{}));
 
 // ── Copy atoms for GMEM→SMEM (cp.async 128-bit) ──
 using GmemCopyAtom = Copy_Atom<SM80_CP_ASYNC_CACHEALWAYS<cute::uint128_t>, half_t>;
@@ -1760,6 +1762,7 @@ struct SharedStorage {
     cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sK1;
     cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sV0;
     cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sV1;
+    cute::array_aligned<half_t, BR * BC>                sP;
 };
 
 // ── Helper: in-register row-wise reduce (max or sum) across MMA fragments ──
@@ -1991,39 +1994,44 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
         }
 
         // ══ GEMM-II: O += P @ V ══
-        // P is in rS (now holding exp values), need to convert to half
-        // and stage through smem for correct MMA A-operand layout.
-        // Reuse sK buffer (GEMM-I is done with it).
-
-        // Convert P to half and write to smem in row-major layout
-        auto sP = make_tensor(make_smem_ptr(sK_ptr),
-                              Layout<Shape<Int<BR>, Int<BC>>,
-                                     Stride<Int<BC>, _1>>{});
-
-        // Use MMA's C→smem copy to write rS (P values) to smem
-        auto smem_tiled_copy_P = make_tiled_copy_C(SmemCopyAtom{}, tiled_mma);
-        auto smem_thr_copy_P   = smem_tiled_copy_P.get_thread_slice(tid);
-        auto tPsP = smem_thr_copy_P.partition_D(sP);
-
-        // Convert rS from fp32 to fp16 in-place fragment, then copy to smem
-        // We need a half-typed fragment
-        auto rP = make_fragment_like<half_t>(rS);
-        CUTE_UNROLL
-        for (int i = 0; i < size(rS); i++) {
-            rP(i) = __float2half(rS(i));
-        }
-        auto tPrP = smem_thr_copy_P.retile_S(rP);
-        copy(smem_tiled_copy_P, tPrP, tPsP);
-        __syncthreads();
-
-        // Now load P from smem as A operand, V from smem as B operand
-        auto tOrP = thr_mma.partition_fragment_A(sP);   // (MMA, M, K)
-        auto tOrV = thr_mma.partition_fragment_B(sV_cur); // (MMA, N, K)
-
+        // Stage P through smem using manual thread mapping to ensure layout correctness.
         {
+            half_t* sP_base = smem.sP.data();
+            int lane_id_p = tid % 32;
+            int wr_p = tid / 32; // for Shape<_8, _1, _1>, wr is warp_id
+            int r0_p = lane_id_p / 4;
+            int r8_p = r0_p + 8;
+            int c0_p = (lane_id_p % 4) * 2;
+            int c1_p = c0_p + 1;
+
+            CUTE_UNROLL
+            for (int mi = 0; mi < size<1>(rS); mi++) { // mi=0 for Shape<_8, _1, _1>
+                CUTE_UNROLL
+                for (int ni = 0; ni < size<2>(rS); ni++) {
+                    int row0 = wr_p * 16 + r0_p;
+                    int row8 = wr_p * 16 + r8_p;
+                    int col0 = ni * 8 + c0_p;
+                    int col1 = ni * 8 + c1_p;
+                    
+                    sP_base[row0 * BC + col0] = __float2half(rS(0, mi, ni));
+                    sP_base[row0 * BC + col1] = __float2half(rS(1, mi, ni));
+                    sP_base[row8 * BC + col0] = __float2half(rS(2, mi, ni));
+                    sP_base[row8 * BC + col1] = __float2half(rS(3, mi, ni));
+                }
+            }
+            __syncthreads();
+
+            // Load P as A, V as B for GEMM-II
+            auto sP_tensor = make_tensor(make_smem_ptr(sP_base),
+                                         Layout<Shape<Int<BR>, Int<BC>>,
+                                                Stride<Int<BC>, _1>>{});
+            
+            auto tOrP = thr_mma.partition_fragment_A(sP_tensor);
+            auto tOrV = thr_mma.partition_fragment_B(sV_cur);
+
             auto smem_tiled_copy_PA = make_tiled_copy_A(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_PA  = smem_tiled_copy_PA.get_thread_slice(tid);
-            auto tPsPA = smem_thr_copy_PA.partition_S(sP);
+            auto tPsPA = smem_thr_copy_PA.partition_S(sP_tensor);
 
             auto smem_tiled_copy_V = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_V   = smem_tiled_copy_V.get_thread_slice(tid);
@@ -2055,12 +2063,8 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
     }
 
     // Write O to global memory
-    // Decode MMA thread→global mapping
     int lane_id = tid % 32;
-    int warp_id = tid / 32;
-    int wr = warp_id / 2;  // row warp (0..3), each covers 32 rows
-    int wc = warp_id % 2;  // col warp (0..1), each covers 32 cols
-
+    int wr = tid / 32; // row warp
     int mma_r0 = lane_id / 4;
     int mma_r8 = mma_r0 + 8;
     int mma_c0 = (lane_id % 4) * 2;
@@ -2070,10 +2074,10 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
     for (int mi = 0; mi < size<1>(rO); mi++) {
         CUTE_UNROLL
         for (int ni = 0; ni < size<2>(rO); ni++) {
-            int row0 = q_start + wr * 32 + mi * 16 + mma_r0;
-            int row8 = q_start + wr * 32 + mi * 16 + mma_r8;
-            int col  = wc * 32 + ni * 8 + mma_c0;
-            int col1 = wc * 32 + ni * 8 + mma_c1;
+            int row0 = q_start + wr * 16 + mi * 128 + mma_r0; // mi=0 for current config
+            int row8 = q_start + wr * 16 + mi * 128 + mma_r8;
+            int col  = ni * 8 + mma_c0;
+            int col1 = ni * 8 + mma_c1;
 
             if (row0 < N && col < D)
                 gO_ptr[offset + row0 * D + col]  = rO(0, mi, ni);
@@ -2085,6 +2089,7 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
                 gO_ptr[offset + row8 * D + col1] = rO(3, mi, ni);
         }
     }
+
 }
 
 // ── Launcher (extern "C" linkage for main file) ──
