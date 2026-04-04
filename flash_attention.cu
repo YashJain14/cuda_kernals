@@ -1737,6 +1737,10 @@ using SmemLayoutQ  = decltype(tile_to_shape(SmemLayoutAtom{},
 using SmemLayoutKV = decltype(tile_to_shape(SmemLayoutAtom{},
                               Shape<Int<BC>, Int<D>>{}));
 
+using SmemLayoutVTrans = decltype(tile_to_shape(SmemLayoutAtom{},
+                                  Shape<Int<D>, Int<BC>>{},
+                                  Step<_2, _1>{}));
+
 // ── MMA definition ──
 // SM80_16x8x16: A=row-major 16×16 half, B=col-major 16×8 half, C=16×8 fp32
 // This atom's C layout naturally matches the A layout of the next MMA,
