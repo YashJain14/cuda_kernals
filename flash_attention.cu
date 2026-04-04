@@ -1414,36 +1414,8 @@ void launch_flash_v7(const half* d_Q, const half* d_K, const half* d_V,
     flash_wmma_v7<<<grid, block, smem>>>(d_Q, d_K, d_V, d_O, N, 1.0f / sqrtf((float)HEAD_DIM));
 }
 
-// ==========================================================
-        //  STAGE 8: PTX mma.sync + ldmatrix
-        // ==========================================================
-        {
-            float ms = 0.0f;
-            float* d_O8;
-            CUDA_CHECK(cudaMalloc(&d_O8, qkv_bytes));
-            CUDA_CHECK(cudaMemset(d_O8, 0, qkv_bytes));
-            for (int r = 0; r < warmup; r++)
-                launch_flash_v8(d_Qh, d_Kh, d_Vh, d_O8, B_nh, N);
-            CUDA_CHECK(cudaDeviceSynchronize());
 
-            CUDA_CHECK(cudaMemset(d_O8, 0, qkv_bytes));
-            CUDA_CHECK(cudaEventRecord(start));
-            for (int r = 0; r < iters; r++)
-                launch_flash_v8(d_Qh, d_Kh, d_Vh, d_O8, B_nh, N);
-            CUDA_CHECK(cudaEventRecord(stop));
-            CUDA_CHECK(cudaEventSynchronize(stop));
-            CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
-            ms /= iters;
 
-            double tflops = total_flops / (ms / 1000.0) / 1e12;
-            CUDA_CHECK(cudaMemcpy(h_O_test, d_O8, qkv_bytes, cudaMemcpyDeviceToHost));
-            float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
-            float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
-            printf("  Stage 8 (PTX mma.sync)  : %8.3f ms  %6.2f TFLOPS  "
-                   "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
-            CUDA_CHECK(cudaFree(d_O8));
-        }
-        
 // ============================================================
 //  Utility: float ↔ half conversion kernels
 // ============================================================
@@ -1798,6 +1770,36 @@ int main(int argc, char** argv) {
             CUDA_CHECK(cudaFree(d_O7));
         }
 
+
+        // ==========================================================
+        //  STAGE 8: PTX mma.sync + ldmatrix
+        // ==========================================================
+        {
+            float ms = 0.0f;
+            float* d_O8;
+            CUDA_CHECK(cudaMalloc(&d_O8, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O8, 0, qkv_bytes));
+            for (int r = 0; r < warmup; r++)
+                launch_flash_v8(d_Qh, d_Kh, d_Vh, d_O8, B_nh, N);
+            CUDA_CHECK(cudaDeviceSynchronize());
+
+            CUDA_CHECK(cudaMemset(d_O8, 0, qkv_bytes));
+            CUDA_CHECK(cudaEventRecord(start));
+            for (int r = 0; r < iters; r++)
+                launch_flash_v8(d_Qh, d_Kh, d_Vh, d_O8, B_nh, N);
+            CUDA_CHECK(cudaEventRecord(stop));
+            CUDA_CHECK(cudaEventSynchronize(stop));
+            CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
+            ms /= iters;
+
+            double tflops = total_flops / (ms / 1000.0) / 1e12;
+            CUDA_CHECK(cudaMemcpy(h_O_test, d_O8, qkv_bytes, cudaMemcpyDeviceToHost));
+            float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
+            float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
+            printf("  Stage 8 (PTX mma.sync)  : %8.3f ms  %6.2f TFLOPS  "
+                   "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
+            CUDA_CHECK(cudaFree(d_O8));
+        }
         printf("\n");
 
         // ----- Cleanup per sequence length -----
