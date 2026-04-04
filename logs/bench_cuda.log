@@ -8,46 +8,46 @@
   Sequence Length N = 1024
   Total FLOPs: 8.590e+09
 ------------------------------------------------------------
-  Stage 0 (Naive 3-kernel) :   13.760 ms    0.62 TFLOPS
-  Stage 1 (Fused 1-thr/row):   23.988 ms    0.36 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
-  Stage 2 (Tiled coop fp32):   16.805 ms    0.51 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
-  Stage 3 (wmma TC fp16)   :    1.040 ms    8.26 TFLOPS  maxErr=1.11e-06  meanRelErr=9.16e-04
-  Stage 4 (wmma 64x64)     :    0.924 ms    9.30 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
-  Stage 5 (FA-2 deferred l):    0.924 ms    9.29 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
-  Stage 6 (async dbl-buf):    0.875 ms    9.82 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
-  Stage 7 (Smem Padded)   :    0.320 ms   26.83 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
-  Stage 8 (PTX mma.sync)  :    0.313 ms   27.47 TFLOPS  maxErr=5.27e-06  meanRelErr=4.63e-03
-  Stage 9 (CuTe FA-2)    :    0.173 ms   49.67 TFLOPS  maxErr=4.66e-03  meanRelErr=4.70e+00
+  Stage 0 (Naive 3-kernel) :   12.616 ms    0.68 TFLOPS
+  Stage 1 (Fused 1-thr/row):   23.898 ms    0.36 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 2 (Tiled coop fp32):   16.809 ms    0.51 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 3 (wmma TC fp16)   :    1.044 ms    8.23 TFLOPS  maxErr=1.11e-06  meanRelErr=9.16e-04
+  Stage 4 (wmma 64x64)     :    0.926 ms    9.28 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
+  Stage 5 (FA-2 deferred l):    0.925 ms    9.28 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
+  Stage 6 (async dbl-buf):    0.877 ms    9.80 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
+  Stage 7 (Smem Padded)   :    0.320 ms   26.81 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
+  Stage 8 (PTX mma.sync)  :    0.313 ms   27.45 TFLOPS  maxErr=5.27e-06  meanRelErr=4.63e-03
+  Stage 9 (CuTe FA-2)    :    0.173 ms   49.75 TFLOPS  maxErr=4.66e-03  meanRelErr=4.70e+00
 
 ------------------------------------------------------------
   Sequence Length N = 2048
   Total FLOPs: 3.436e+10
 ------------------------------------------------------------
-  Stage 0 (Naive 3-kernel) :   40.585 ms    0.85 TFLOPS
-  Stage 1 (Fused 1-thr/row):   72.552 ms    0.47 TFLOPS  maxErr=6.64e-09  meanRelErr=2.17e-06
-  Stage 2 (Tiled coop fp32):   63.557 ms    0.54 TFLOPS  maxErr=6.40e-09  meanRelErr=2.17e-06
-  Stage 3 (wmma TC fp16)   :    3.923 ms    8.76 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
-  Stage 4 (wmma 64x64)     :    3.647 ms    9.42 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
-  Stage 5 (FA-2 deferred l):    3.646 ms    9.42 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
-  Stage 6 (async dbl-buf):    3.467 ms    9.91 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
-  Stage 7 (Smem Padded)   :    1.253 ms   27.43 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
-  Stage 8 (PTX mma.sync)  :    1.229 ms   27.95 TFLOPS  maxErr=3.96e-06  meanRelErr=4.70e-03
-  Stage 9 (CuTe FA-2)    :    0.597 ms   57.54 TFLOPS  maxErr=3.42e-03  meanRelErr=4.75e+00
+  Stage 0 (Naive 3-kernel) :   40.631 ms    0.85 TFLOPS
+  Stage 1 (Fused 1-thr/row):   72.702 ms    0.47 TFLOPS  maxErr=6.64e-09  meanRelErr=2.17e-06
+  Stage 2 (Tiled coop fp32):   63.844 ms    0.54 TFLOPS  maxErr=6.40e-09  meanRelErr=2.17e-06
+  Stage 3 (wmma TC fp16)   :    3.927 ms    8.75 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 4 (wmma 64x64)     :    3.652 ms    9.41 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 5 (FA-2 deferred l):    3.652 ms    9.41 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 6 (async dbl-buf):    3.471 ms    9.90 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 7 (Smem Padded)   :    1.255 ms   27.39 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 8 (PTX mma.sync)  :    1.231 ms   27.92 TFLOPS  maxErr=3.96e-06  meanRelErr=4.70e-03
+  Stage 9 (CuTe FA-2)    :    0.598 ms   57.43 TFLOPS  maxErr=3.42e-03  meanRelErr=4.75e+00
 
 ------------------------------------------------------------
   Sequence Length N = 4096
   Total FLOPs: 1.374e+11
 ------------------------------------------------------------
-  Stage 0 (Naive 3-kernel) :  164.279 ms    0.84 TFLOPS
-  Stage 1 (Fused 1-thr/row):  261.533 ms    0.53 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
-  Stage 2 (Tiled coop fp32):  253.621 ms    0.54 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
-  Stage 3 (wmma TC fp16)   :   15.532 ms    8.85 TFLOPS  maxErr=5.43e-07  meanRelErr=1.07e-03
-  Stage 4 (wmma 64x64)     :   13.780 ms    9.97 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
-  Stage 5 (FA-2 deferred l):   13.780 ms    9.97 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
-  Stage 6 (async dbl-buf):   13.138 ms   10.46 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
-  Stage 7 (Smem Padded)   :    4.665 ms   29.46 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
-  Stage 8 (PTX mma.sync)  :    4.568 ms   30.09 TFLOPS  maxErr=2.93e-06  meanRelErr=5.10e-03
-  Stage 9 (CuTe FA-2)    :    2.218 ms   61.97 TFLOPS  maxErr=2.62e-03  meanRelErr=4.77e+00
+  Stage 0 (Naive 3-kernel) :  164.493 ms    0.84 TFLOPS
+  Stage 1 (Fused 1-thr/row):  261.891 ms    0.52 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 2 (Tiled coop fp32):  254.838 ms    0.54 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 3 (wmma TC fp16)   :   15.611 ms    8.80 TFLOPS  maxErr=5.43e-07  meanRelErr=1.07e-03
+  Stage 4 (wmma 64x64)     :   13.805 ms    9.96 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+  Stage 5 (FA-2 deferred l):   13.811 ms    9.95 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+  Stage 6 (async dbl-buf):   13.208 ms   10.41 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+  Stage 7 (Smem Padded)   :    4.676 ms   29.39 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+  Stage 8 (PTX mma.sync)  :    4.580 ms   30.01 TFLOPS  maxErr=2.93e-06  meanRelErr=5.10e-03
+  Stage 9 (CuTe FA-2)    :    2.223 ms   61.83 TFLOPS  maxErr=2.62e-03  meanRelErr=4.77e+00
 
 ============================================================
   Done.
