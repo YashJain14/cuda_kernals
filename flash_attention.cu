@@ -74,6 +74,41 @@ __device__ __forceinline__ void cp_async_wait_one_pending() {
     asm volatile("cp.async.wait_group 1;\n" ::: "memory");
 }
 
+// ── PTX mma.sync + ldmatrix intrinsics for sm_80 ───────────
+// ldmatrix loads 4 registers (8 halfs each) from shared memory
+// using the warp's thread layout to fill an MMA fragment.
+__device__ __forceinline__ void ldmatrix_x4(uint32_t& r0, uint32_t& r1,
+                                            uint32_t& r2, uint32_t& r3,
+                                            const void* smem_ptr) {
+    uint32_t addr = static_cast<uint32_t>(__cvta_generic_to_shared(smem_ptr));
+    asm volatile("ldmatrix.sync.aligned.m8n8.x4.shared.b16 {%0,%1,%2,%3}, [%4];\n"
+                 : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3) : "r"(addr));
+}
+
+__device__ __forceinline__ void ldmatrix_x4_trans(uint32_t& r0, uint32_t& r1,
+                                                  uint32_t& r2, uint32_t& r3,
+                                                  const void* smem_ptr) {
+    uint32_t addr = static_cast<uint32_t>(__cvta_generic_to_shared(smem_ptr));
+    asm volatile("ldmatrix.sync.aligned.m8n8.x4.trans.shared.b16 {%0,%1,%2,%3}, [%4];\n"
+                 : "=r"(r0), "=r"(r1), "=r"(r2), "=r"(r3) : "r"(addr));
+}
+
+// mma.sync.aligned.m16n8k16 — the native Ampere MMA instruction
+// A: 16x16 half (row-major), B: 16x8 half (col-major), C/D: 16x8 fp32
+// Each thread holds: A in 4 regs, B in 2 regs, C in 4 regs, D in 4 regs
+__device__ __forceinline__ void mma_m16n8k16_f16_f32(
+    float& d0, float& d1, float& d2, float& d3,
+    uint32_t a0, uint32_t a1, uint32_t a2, uint32_t a3,
+    uint32_t b0, uint32_t b1,
+    float c0, float c1, float c2, float c3) {
+    asm volatile(
+        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
+        "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%10,%11,%12,%13};\n"
+        : "=f"(d0), "=f"(d1), "=f"(d2), "=f"(d3)
+        : "r"(a0), "r"(a1), "r"(a2), "r"(a3),
+          "r"(b0), "r"(b1),
+          "f"(c0), "f"(c1), "f"(c2), "f"(c3));
+}
 
 // ============================================================
 //  STAGE 0: Naive Attention — Three Separate Kernels
@@ -1379,7 +1414,36 @@ void launch_flash_v7(const half* d_Q, const half* d_K, const half* d_V,
     flash_wmma_v7<<<grid, block, smem>>>(d_Q, d_K, d_V, d_O, N, 1.0f / sqrtf((float)HEAD_DIM));
 }
 
+// ==========================================================
+        //  STAGE 8: PTX mma.sync + ldmatrix
+        // ==========================================================
+        {
+            float ms = 0.0f;
+            float* d_O8;
+            CUDA_CHECK(cudaMalloc(&d_O8, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O8, 0, qkv_bytes));
+            for (int r = 0; r < warmup; r++)
+                launch_flash_v8(d_Qh, d_Kh, d_Vh, d_O8, B_nh, N);
+            CUDA_CHECK(cudaDeviceSynchronize());
 
+            CUDA_CHECK(cudaMemset(d_O8, 0, qkv_bytes));
+            CUDA_CHECK(cudaEventRecord(start));
+            for (int r = 0; r < iters; r++)
+                launch_flash_v8(d_Qh, d_Kh, d_Vh, d_O8, B_nh, N);
+            CUDA_CHECK(cudaEventRecord(stop));
+            CUDA_CHECK(cudaEventSynchronize(stop));
+            CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
+            ms /= iters;
+
+            double tflops = total_flops / (ms / 1000.0) / 1e12;
+            CUDA_CHECK(cudaMemcpy(h_O_test, d_O8, qkv_bytes, cudaMemcpyDeviceToHost));
+            float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
+            float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
+            printf("  Stage 8 (PTX mma.sync)  : %8.3f ms  %6.2f TFLOPS  "
+                   "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
+            CUDA_CHECK(cudaFree(d_O8));
+        }
+        
 // ============================================================
 //  Utility: float ↔ half conversion kernels
 // ============================================================
