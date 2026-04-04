@@ -2031,9 +2031,7 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
                                                 Stride<Int<BC>, _1>>{});
             
             // Logically transpose sV_cur for the B operand (D, BC)
-            auto sV_trans = make_tensor(sV_cur.data(), 
-                                        make_layout(shape<1>(sV_cur.layout()), shape<0>(sV_cur.layout()),
-                                                    stride<1>(sV_cur.layout()), stride<0>(sV_cur.layout())));
+            auto sV_trans = make_tensor(sV_cur.data(), SmemLayoutVTrans{});
 
             auto tOrP = thr_mma.partition_fragment_A(sP_tensor);
             auto tOrV = thr_mma.partition_fragment_B(sV_trans);
