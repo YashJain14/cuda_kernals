@@ -8,96 +8,100 @@
   Sequence Length N = 1024
   Total FLOPs: 8.590e+09
 ------------------------------------------------------------
-  Stage 0 (Naive 3-kernel) :   13.795 ms    0.62 TFLOPS
-  Stage 1 (Fused 1-thr/row):   24.281 ms    0.35 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
-  Stage 2 (Tiled coop fp32):   16.824 ms    0.51 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
-  Stage 3 (wmma TC fp16)   :    1.046 ms    8.22 TFLOPS  maxErr=1.11e-06  meanRelErr=9.16e-04
-  Stage 4 (wmma 64x64)     :    0.927 ms    9.27 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
-  Stage 5 (FA-2 deferred l):    0.927 ms    9.27 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
-  Stage 6 (async dbl-buf):    0.879 ms    9.78 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
+  Stage 0 (Naive 3-kernel) :   13.788 ms    0.62 TFLOPS
+  Stage 1 (Fused 1-thr/row):   23.956 ms    0.36 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 2 (Tiled coop fp32):   16.807 ms    0.51 TFLOPS  maxErr=6.05e-09  meanRelErr=1.39e-06
+  Stage 3 (wmma TC fp16)   :    1.041 ms    8.25 TFLOPS  maxErr=1.11e-06  meanRelErr=9.16e-04
+  Stage 4 (wmma 64x64)     :    0.924 ms    9.30 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
+  Stage 5 (FA-2 deferred l):    0.924 ms    9.30 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
+  Stage 6 (async dbl-buf):    0.876 ms    9.81 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
   Stage 7 (Smem Padded)   :    0.322 ms   26.65 TFLOPS  maxErr=1.08e-06  meanRelErr=9.17e-04
+  Stage 8 (PTX mma.sync)  :    0.314 ms   27.37 TFLOPS  maxErr=inf  meanRelErr=nan
 
 ------------------------------------------------------------
   Sequence Length N = 2048
   Total FLOPs: 3.436e+10
 ------------------------------------------------------------
-  Stage 0 (Naive 3-kernel) :   40.730 ms    0.84 TFLOPS
-  Stage 1 (Fused 1-thr/row):   72.590 ms    0.47 TFLOPS  maxErr=6.64e-09  meanRelErr=2.17e-06
-  Stage 2 (Tiled coop fp32):   64.056 ms    0.54 TFLOPS  maxErr=6.40e-09  meanRelErr=2.17e-06
-  Stage 3 (wmma TC fp16)   :    3.938 ms    8.73 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
-  Stage 4 (wmma 64x64)     :    3.661 ms    9.39 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
-  Stage 5 (FA-2 deferred l):    3.662 ms    9.38 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
-  Stage 6 (async dbl-buf):    3.475 ms    9.89 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
-  Stage 7 (Smem Padded)   :    1.264 ms   27.18 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 0 (Naive 3-kernel) :   40.662 ms    0.84 TFLOPS
+  Stage 1 (Fused 1-thr/row):   72.494 ms    0.47 TFLOPS  maxErr=6.64e-09  meanRelErr=2.17e-06
+  Stage 2 (Tiled coop fp32):   63.602 ms    0.54 TFLOPS  maxErr=6.40e-09  meanRelErr=2.17e-06
+  Stage 3 (wmma TC fp16)   :    3.930 ms    8.74 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 4 (wmma 64x64)     :    3.652 ms    9.41 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 5 (FA-2 deferred l):    3.653 ms    9.41 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 6 (async dbl-buf):    3.470 ms    9.90 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 7 (Smem Padded)   :    1.263 ms   27.21 TFLOPS  maxErr=7.73e-07  meanRelErr=1.02e-03
+  Stage 8 (PTX mma.sync)  :    1.234 ms   27.84 TFLOPS  maxErr=1.50e+03  meanRelErr=nan
 
 ------------------------------------------------------------
   Sequence Length N = 4096
   Total FLOPs: 1.374e+11
 ------------------------------------------------------------
-  Stage 0 (Naive 3-kernel) :  164.785 ms    0.83 TFLOPS
-  Stage 1 (Fused 1-thr/row):  262.291 ms    0.52 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
-  Stage 2 (Tiled coop fp32):  255.601 ms    0.54 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
-  Stage 3 (wmma TC fp16)   :   15.649 ms    8.78 TFLOPS  maxErr=5.43e-07  meanRelErr=1.07e-03
-  Stage 4 (wmma 64x64)     :   13.842 ms    9.93 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
-  Stage 5 (FA-2 deferred l):   13.843 ms    9.93 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
-  Stage 6 (async dbl-buf):   13.239 ms   10.38 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
-  Stage 7 (Smem Padded)   :    4.713 ms   29.16 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+  Stage 0 (Naive 3-kernel) :  164.302 ms    0.84 TFLOPS
+  Stage 1 (Fused 1-thr/row):  261.690 ms    0.53 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 2 (Tiled coop fp32):  253.797 ms    0.54 TFLOPS  maxErr=7.68e-09  meanRelErr=3.14e-06
+  Stage 3 (wmma TC fp16)   :   15.552 ms    8.84 TFLOPS  maxErr=5.43e-07  meanRelErr=1.07e-03
+  Stage 4 (wmma 64x64)     :   13.787 ms    9.97 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+  Stage 5 (FA-2 deferred l):   13.785 ms    9.97 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+  Stage 6 (async dbl-buf):   13.153 ms   10.45 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+  Stage 7 (Smem Padded)   :    4.698 ms   29.26 TFLOPS  maxErr=5.28e-07  meanRelErr=1.07e-03
+  Stage 8 (PTX mma.sync)  :    4.583 ms   29.99 TFLOPS  maxErr=1.56e-03  meanRelErr=3.78e+00
 
 ============================================================
   Done.
 ============================================================
-Generating '/var/tmp/pbs.13473878.pbs101/nsys-report-ceb6.qdstrm'
-[1/7] [0%                          ] profile_stages.nsys-rep[1/7] [0%                          ] profile_stages.nsys-rep[1/7] [=======39%                  ] profile_stages.nsys-rep[1/7] [========41%                 ] profile_stages.nsys-rep[1/7] [==========48%               ] profile_stages.nsys-rep[1/7] [============55%             ] profile_stages.nsys-rep[1/7] [==============63%           ] profile_stages.nsys-rep[1/7] [================70%         ] profile_stages.nsys-rep[1/7] [=================74%        ] profile_stages.nsys-rep[1/7] [=======================93%  ] profile_stages.nsys-rep[1/7] [========================100%] profile_stages.nsys-rep[1/7] [========================100%] profile_stages.nsys-rep
+Generating '/var/tmp/pbs.13487023.pbs101/nsys-report-ab46.qdstrm'
+[1/7] [0%                          ] profile_stages.nsys-rep[1/7] [0%                          ] profile_stages.nsys-rep[1/7] [======34%                   ] profile_stages.nsys-rep[1/7] [=======37%                  ] profile_stages.nsys-rep[1/7] [=======39%                  ] profile_stages.nsys-rep[1/7] [=============59%            ] profile_stages.nsys-rep[1/7] [=============60%            ] profile_stages.nsys-rep[1/7] [===============67%          ] profile_stages.nsys-rep[1/7] [=================74%        ] profile_stages.nsys-rep[1/7] [===================82%      ] profile_stages.nsys-rep[1/7] [=====================89%    ] profile_stages.nsys-rep[1/7] [=======================93%  ] profile_stages.nsys-rep[1/7] [========================100%] profile_stages.nsys-rep[1/7] [========================100%] profile_stages.nsys-rep
 [2/7] [0%                          ] profile_stages.sqlite[2/7] [1%                          ] profile_stages.sqlite[2/7] [2%                          ] profile_stages.sqlite[2/7] [3%                          ] profile_stages.sqlite[2/7] [4%                          ] profile_stages.sqlite[2/7] [5%                          ] profile_stages.sqlite[2/7] [6%                          ] profile_stages.sqlite[2/7] [7%                          ] profile_stages.sqlite[2/7] [8%                          ] profile_stages.sqlite[2/7] [9%                          ] profile_stages.sqlite[2/7] [10%                         ] profile_stages.sqlite[2/7] [11%                         ] profile_stages.sqlite[2/7] [12%                         ] profile_stages.sqlite[2/7] [13%                         ] profile_stages.sqlite[2/7] [14%                         ] profile_stages.sqlite[2/7] [=15%                        ] profile_stages.sqlite[2/7] [=16%                        ] profile_stages.sqlite[2/7] [=17%                        ] profile_stages.sqlite[2/7] [==18%                       ] profile_stages.sqlite[2/7] [==19%                       ] profile_stages.sqlite[2/7] [==20%                       ] profile_stages.sqlite[2/7] [==21%                       ] profile_stages.sqlite[2/7] [===22%                      ] profile_stages.sqlite[2/7] [===23%                      ] profile_stages.sqlite[2/7] [===24%                      ] profile_stages.sqlite[2/7] [====25%                     ] profile_stages.sqlite[2/7] [====26%                     ] profile_stages.sqlite[2/7] [====27%                     ] profile_stages.sqlite[2/7] [====28%                     ] profile_stages.sqlite[2/7] [=====29%                    ] profile_stages.sqlite[2/7] [=====30%                    ] profile_stages.sqlite[2/7] [=====31%                    ] profile_stages.sqlite[2/7] [=====32%                    ] profile_stages.sqlite[2/7] [======33%                   ] profile_stages.sqlite[2/7] [======34%                   ] profile_stages.sqlite[2/7] [======35%                   ] profile_stages.sqlite[2/7] [=======36%                  ] profile_stages.sqlite[2/7] [=======37%                  ] profile_stages.sqlite[2/7] [=======38%                  ] profile_stages.sqlite[2/7] [=======39%                  ] profile_stages.sqlite[2/7] [========40%                 ] profile_stages.sqlite[2/7] [========41%                 ] profile_stages.sqlite[2/7] [========42%                 ] profile_stages.sqlite[2/7] [=========43%                ] profile_stages.sqlite[2/7] [=========44%                ] profile_stages.sqlite[2/7] [=========45%                ] profile_stages.sqlite[2/7] [=========46%                ] profile_stages.sqlite[2/7] [==========47%               ] profile_stages.sqlite[2/7] [==========48%               ] profile_stages.sqlite[2/7] [==========49%               ] profile_stages.sqlite[2/7] [===========50%              ] profile_stages.sqlite[2/7] [===========51%              ] profile_stages.sqlite[2/7] [===========52%              ] profile_stages.sqlite[2/7] [===========53%              ] profile_stages.sqlite[2/7] [============54%             ] profile_stages.sqlite[2/7] [============55%             ] profile_stages.sqlite[2/7] [============56%             ] profile_stages.sqlite[2/7] [============57%             ] profile_stages.sqlite[2/7] [=============58%            ] profile_stages.sqlite[2/7] [=============59%            ] profile_stages.sqlite[2/7] [=============60%            ] profile_stages.sqlite[2/7] [==============61%           ] profile_stages.sqlite[2/7] [==============62%           ] profile_stages.sqlite[2/7] [==============63%           ] profile_stages.sqlite[2/7] [==============64%           ] profile_stages.sqlite[2/7] [===============65%          ] profile_stages.sqlite[2/7] [===============66%          ] profile_stages.sqlite[2/7] [===============67%          ] profile_stages.sqlite[2/7] [================68%         ] profile_stages.sqlite[2/7] [================69%         ] profile_stages.sqlite[2/7] [================70%         ] profile_stages.sqlite[2/7] [================71%         ] profile_stages.sqlite[2/7] [=================72%        ] profile_stages.sqlite[2/7] [=================73%        ] profile_stages.sqlite[2/7] [=================74%        ] profile_stages.sqlite[2/7] [==================75%       ] profile_stages.sqlite[2/7] [==================76%       ] profile_stages.sqlite[2/7] [==================77%       ] profile_stages.sqlite[2/7] [==================78%       ] profile_stages.sqlite[2/7] [===================79%      ] profile_stages.sqlite[2/7] [===================80%      ] profile_stages.sqlite[2/7] [===================81%      ] profile_stages.sqlite[2/7] [===================82%      ] profile_stages.sqlite[2/7] [====================83%     ] profile_stages.sqlite[2/7] [====================84%     ] profile_stages.sqlite[2/7] [====================85%     ] profile_stages.sqlite[2/7] [=====================86%    ] profile_stages.sqlite[2/7] [=====================87%    ] profile_stages.sqlite[2/7] [=====================88%    ] profile_stages.sqlite[2/7] [=====================89%    ] profile_stages.sqlite[2/7] [======================90%   ] profile_stages.sqlite[2/7] [======================91%   ] profile_stages.sqlite[2/7] [======================92%   ] profile_stages.sqlite[2/7] [=======================93%  ] profile_stages.sqlite[2/7] [=======================94%  ] profile_stages.sqlite[2/7] [=======================95%  ] profile_stages.sqlite[2/7] [=======================96%  ] profile_stages.sqlite[2/7] [========================97% ] profile_stages.sqlite[2/7] [========================98% ] profile_stages.sqlite[2/7] [========================99% ] profile_stages.sqlite[2/7] [========================100%] profile_stages.sqlite[2/7] [========================100%] profile_stages.sqlite
 SKIPPED: /home/users/ntu/yash012/cuda_kernals/logs/profile_stages.sqlite does not contain NV Tools Extension (NVTX) data.
 [3/7] Executing 'nvtx_sum' stats report
 [4/7] Executing 'cuda_api_sum' stats report
 
- Time (%)  Total Time (ns)  Num Calls    Avg (ns)       Med (ns)     Min (ns)     Max (ns)      StdDev (ns)            Name         
- --------  ---------------  ---------  -------------  -------------  ---------  -------------  -------------  ----------------------
-     75.7    9,953,230,633         24  414,717,943.0  133,563,011.5  3,189,508  2,622,889,942  759,981,402.9  cudaEventSynchronize  
-     22.9    3,004,294,076         27  111,270,151.0   14,147,298.0     28,476    786,608,102  217,981,349.9  cudaDeviceSynchronize 
-      0.7       94,687,021          2   47,343,510.5   47,343,510.5        972     94,686,049   66,952,460.0  cudaEventCreate       
-      0.5       61,841,587         36    1,717,821.9    1,354,622.5     19,418      5,527,314    1,261,548.0  cudaMemcpy            
-      0.1       14,275,211      4,026        3,545.8        3,006.0      2,825      1,329,229       20,957.1  cudaLaunchKernel      
-      0.1        7,769,034         45      172,645.2      112,849.0     90,095      1,562,111      221,317.7  cudaMalloc            
-      0.0        5,096,663         45      113,259.2       94,203.0     72,541        241,989       43,522.6  cudaFree              
-      0.0          630,734         42       15,017.5       13,351.5      5,581         37,092        8,182.1  cudaMemset            
-      0.0          173,083         48        3,605.9        2,996.0      1,864          9,278        1,823.7  cudaEventRecord       
-      0.0            2,365          2        1,182.5        1,182.5        521          1,844          935.5  cudaEventDestroy      
-      0.0            1,623          1        1,623.0        1,623.0      1,623          1,623            0.0  cuModuleGetLoadingMode
+ Time (%)  Total Time (ns)  Num Calls    Avg (ns)       Med (ns)    Min (ns)     Max (ns)      StdDev (ns)            Name         
+ --------  ---------------  ---------  -------------  ------------  ---------  -------------  -------------  ----------------------
+     75.7    9,972,512,011         27  369,352,296.7  46,955,312.0  3,107,270  2,616,896,129  722,750,356.7  cudaEventSynchronize  
+     22.8    3,008,948,398         30  100,298,279.9  12,774,553.0     33,805    785,230,580  208,002,247.6  cudaDeviceSynchronize 
+      0.8      102,388,918          2   51,194,459.0  51,194,459.0      1,873    102,387,045   72,397,249.4  cudaEventCreate       
+      0.5       67,399,859         39    1,728,201.5   1,381,592.0     17,624      5,453,133    1,262,944.6  cudaMemcpy            
+      0.1       13,722,030      4,065        3,375.7       2,976.0      2,815        842,395       13,246.1  cudaLaunchKernel      
+      0.1        7,874,229         48      164,046.4     110,259.0     88,111      1,281,998      176,682.2  cudaMalloc            
+      0.0        5,115,938         48      106,582.0      91,327.0     68,834        194,798       37,661.6  cudaFree              
+      0.0          546,513         48       11,385.7      10,711.0      4,910         23,265        5,742.7  cudaMemset            
+      0.0          175,077         54        3,242.2       3,020.5      1,843          7,305        1,381.8  cudaEventRecord       
+      0.0            2,926          2        1,463.0       1,463.0        511          2,415        1,346.3  cudaEventDestroy      
+      0.0            1,413          1        1,413.0       1,413.0      1,413          1,413            0.0  cuModuleGetLoadingMode
 
 [5/7] Executing 'cuda_gpu_kern_sum' stats report
 
  Time (%)  Total Time (ns)  Instances    Avg (ns)       Med (ns)     Min (ns)    Max (ns)     StdDev (ns)                                           Name                                         
  --------  ---------------  ---------  -------------  ------------  ----------  -----------  -------------  -------------------------------------------------------------------------------------
-     36.1    4,687,122,038         39  120,182,616.4  72,599,758.0  22,109,873  262,607,902  103,630,867.9  flash_fused_v1(const float *, const float *, const float *, float *, int, int, float)
-     33.7    4,374,134,127         39  112,157,285.3  64,052,565.0  16,818,868  255,649,065  104,593,177.3  flash_tiled_v2(const float *, const float *, const float *, float *, int, int, float)
-     17.2    2,228,730,724      1,248    1,785,841.9   1,008,607.0     326,368    4,023,678    1,605,881.4  naive_matmul_qk(const float *, const float *, float *, int, int, float)              
-      4.1      532,830,496      1,248      426,947.5     230,576.0      81,985    1,025,215      383,693.6  naive_matmul_pv(const float *, const float *, float *, int, int)                     
-      2.1      268,169,174         39    6,876,132.7   3,936,510.0   1,041,855   15,652,153    6,395,889.0  flash_wmma_v3(const __half *, const __half *, const __half *, float *, int, float)   
-      1.8      239,568,225         39    6,142,775.0   3,658,781.0     924,192   13,847,994    5,629,773.3  flash_wmma_v5(const __half *, const __half *, const __half *, float *, int, float)   
-      1.8      239,537,603         39    6,141,989.8   3,659,454.0     924,351   13,850,073    5,628,928.3  flash_wmma_v4(const __half *, const __half *, const __half *, float *, int, float)   
-      1.8      228,654,859         39    5,862,945.1   3,472,318.0     875,871   13,253,210    5,391,449.8  flash_wmma_v6(const __half *, const __half *, const __half *, float *, int, float)   
-      0.7       85,243,229      1,248       68,303.9      29,248.0      13,024      164,064       66,830.8  naive_softmax(const float *, float *, int)                                           
-      0.6       81,855,863         39    2,098,868.3   1,263,071.0     320,800    4,714,270    1,912,011.6  flash_wmma_v7(const __half *, const __half *, const __half *, float *, int, float)   
-      0.0          260,385          9       28,931.7      26,336.0      12,832       49,472       14,263.6  float2half_kernel(const float *, __half *, int)                                      
+     36.0    4,672,893,508         39  119,817,782.3  72,470,670.0  21,915,236  261,907,991  103,509,489.5  flash_fused_v1(const float *, const float *, const float *, float *, int, int, float)
+     33.4    4,344,503,047         39  111,397,514.0  63,598,948.0  16,802,381  253,845,820  103,820,882.8  flash_tiled_v2(const float *, const float *, const float *, float *, int, int, float)
+     17.1    2,223,344,168      1,248    1,781,525.8   1,006,692.0     326,305    4,012,467    1,601,450.0  naive_matmul_qk(const float *, const float *, float *, int, int, float)              
+      4.1      530,757,972      1,248      425,286.8     230,849.0      82,433    1,020,165      381,474.2  naive_matmul_pv(const float *, const float *, float *, int, int)                     
+      2.1      266,741,453         39    6,839,524.4   3,929,137.0   1,038,565   15,554,186    6,352,584.3  flash_wmma_v3(const __half *, const __half *, const __half *, float *, int, float)   
+      1.8      238,676,745         39    6,119,916.5   3,650,097.0     922,116   13,798,754    5,605,267.3  flash_wmma_v4(const __half *, const __half *, const __half *, float *, int, float)   
+      1.8      238,667,497         39    6,119,679.4   3,651,025.0     922,212   13,793,857    5,604,346.4  flash_wmma_v5(const __half *, const __half *, const __half *, float *, int, float)   
+      1.8      227,434,516         39    5,831,654.3   3,468,496.0     873,764   13,163,327    5,352,800.2  flash_wmma_v6(const __half *, const __half *, const __half *, float *, int, float)   
+      0.7       85,104,785      1,248       68,192.9      29,312.0      12,928      163,649       66,676.7  naive_softmax(const float *, float *, int)                                           
+      0.6       81,633,443         39    2,093,165.2   1,261,414.0     320,706    4,701,494    1,905,226.3  flash_wmma_v7(const __half *, const __half *, const __half *, float *, int, float)   
+      0.6       79,663,740         39    2,042,660.0   1,232,837.0     312,513    4,584,502    1,858,341.0  flash_mma_v8(const __half *, const __half *, const __half *, float *, int, float)    
+      0.0          259,104          9       28,789.3      26,048.0      12,864       49,568       14,188.9  float2half_kernel(const float *, __half *, int)                                      
 
 [6/7] Executing 'cuda_gpu_mem_time_sum' stats report
 
  Time (%)  Total Time (ns)  Count   Avg (ns)     Med (ns)    Min (ns)  Max (ns)   StdDev (ns)      Operation     
  --------  ---------------  -----  -----------  -----------  --------  ---------  -----------  ------------------
-     76.0       42,655,976     24  1,777,332.3  1,248,015.0   575,776  4,675,486  1,182,110.3  [CUDA memcpy DtoH]
-     22.9       12,873,078      9  1,430,342.0  1,240,159.0   436,127  2,907,166    960,425.2  [CUDA memcpy HtoD]
-      0.9          508,509     42     12,107.4      9,247.5     5,312     24,768      6,499.9  [CUDA memset]     
-      0.1           83,488      3     27,829.3     26,048.0    13,696     43,744     15,103.0  [CUDA memcpy DtoD]
+     78.4       48,725,636     27  1,804,653.2  1,291,014.0   597,986  4,700,630  1,191,666.5  [CUDA memcpy DtoH]
+     20.5       12,747,131      9  1,416,347.9  1,230,790.0   438,978  2,824,365    926,499.2  [CUDA memcpy HtoD]
+      0.9          581,256     48     12,109.5      8,992.0     5,312     23,937      6,529.6  [CUDA memset]     
+      0.1           82,625      3     27,541.7     25,952.0    13,216     43,457     15,183.0  [CUDA memcpy DtoD]
 
 [7/7] Executing 'cuda_gpu_mem_size_sum' stats report
 
  Total (MB)  Count  Avg (MB)  Med (MB)  Min (MB)  Max (MB)  StdDev (MB)      Operation     
  ----------  -----  --------  --------  --------  --------  -----------  ------------------
-    822.084     42    19.573    16.777     8.389    33.554       10.589  [CUDA memset]     
-    469.762     24    19.573    16.777     8.389    33.554       10.687  [CUDA memcpy DtoH]
+    939.524     48    19.573    16.777     8.389    33.554       10.573  [CUDA memset]     
+    528.482     27    19.573    16.777     8.389    33.554       10.662  [CUDA memcpy DtoH]
     176.161      9    19.573    16.777     8.389    33.554       11.097  [CUDA memcpy HtoD]
      58.720      3    19.573    16.777     8.389    33.554       12.814  [CUDA memcpy DtoD]
 

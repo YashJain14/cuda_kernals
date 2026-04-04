@@ -1,7 +1,7 @@
 ============================================================
-  Job:         13473864.pbs101
-  Node:        x1000c2s7b0n0
-  Started:     Fri Apr  3 15:34:50 +08 2026
+  Job:         13486893.pbs101
+  Node:        x1000c3s5b0n1
+  Started:     Sat Apr  4 13:46:42 +08 2026
   Working dir: /home/users/ntu/yash012/cuda_kernals
   Log dir:     logs
 ============================================================
@@ -16,17 +16,589 @@ PyTorch: 2.5.1+cu121
 --- Build ---
 rm -f flash_attn cublas_ref
 nvcc -O3 -arch=sm_80 --use_fast_math -Xcompiler -Wall flash_attention.cu -o flash_attn
-flash_attention.cu(491): error: identifier "d" is undefined
-              sK[i] = (gr < N) ? K[offset + gr * d + c] : __float2half(0.0f);
+flash_attention.cu(1420): error: expected a declaration
+          {
+          ^
+
+flash_attention.cu(1425): error: expected a declaration
+              for (int r = 0; r < warmup; r++)
+              ^
+
+flash_attention.cu(1427): error: expected a declaration
+              do { cudaError_t err = (cudaDeviceSynchronize()); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1427): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+Remark: The warnings can be suppressed with "-diag-suppress <warning-number>"
+
+flash_attention.cu(1429): error: expected a declaration
+              do { cudaError_t err = (cudaMemset(d_O8, 0, qkv_bytes)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1429): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1430): error: expected a declaration
+              do { cudaError_t err = (cudaEventRecord(start)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1430): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1431): error: expected a declaration
+              for (int r = 0; r < iters; r++)
+              ^
+
+flash_attention.cu(1433): error: expected a declaration
+              do { cudaError_t err = (cudaEventRecord(stop)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1433): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1434): error: expected a declaration
+              do { cudaError_t err = (cudaEventSynchronize(stop)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1434): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1435): error: expected a declaration
+              do { cudaError_t err = (cudaEventElapsedTime(&ms, start, stop)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1435): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1436): error: this declaration has no storage class or type specifier
+              ms /= iters;
+              ^
+
+flash_attention.cu(1436): error: expected a ";"
+              ms /= iters;
+                 ^
+
+flash_attention.cu(1438): error: identifier "total_flops" is undefined
+              double tflops = total_flops / (ms / 1000.0) / 1e12;
+                              ^
+
+flash_attention.cu(1439): error: expected a declaration
+              do { cudaError_t err = (cudaMemcpy(h_O_test, d_O8, qkv_bytes, cudaMemcpyDeviceToHost)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1439): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1440): error: identifier "h_O_ref" is undefined
+              float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
+                                        ^
+
+flash_attention.cu(1440): error: identifier "h_O_test" is undefined
+              float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
                                                  ^
 
-flash_attention.cu(491): error: ambiguous "?" operation: second operand of type "<error-type>" can be converted to third operand type "__half", and vice versa
-              sK[i] = (gr < N) ? K[offset + gr * d + c] : __float2half(0.0f);
-                                                        ^
+flash_attention.cu(1440): error: identifier "total_elems" is undefined
+              float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
+                                                           ^
 
-flash_attention.cu(492): error: ambiguous "?" operation: second operand of type "<error-type>" can be converted to third operand type "__half", and vice versa
-              sV[i] = (gr < N) ? V[offset + gr * d + c] : __float2half(0.0f);
-                                                        ^
+flash_attention.cu(1440): error: identifier "max_abs_error" is undefined
+              float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
+                          ^
 
-3 errors detected in the compilation of "flash_attention.cu".
-make: *** [Makefile:15: flash_attn] Error 2
+flash_attention.cu(1441): error: identifier "mean_rel_error" is undefined
+              float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
+                          ^
+
+flash_attention.cu(1442): error: this declaration has no storage class or type specifier
+              printf("  Stage 8 (PTX mma.sync)  : %8.3f ms  %6.2f TFLOPS  "
+              ^
+
+flash_attention.cu(1442): error: declaration is incompatible with "int printf(const char *, ...)" (declared at line 332 of /usr/include/stdio.h)
+              printf("  Stage 8 (PTX mma.sync)  : %8.3f ms  %6.2f TFLOPS  "
+              ^
+
+flash_attention.cu(1443): error: too many initializer values
+                     "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
+                                                       ^
+
+flash_attention.cu(1442): error: a value of type "const char *" cannot be used to initialize an entity of type "int"
+              printf("  Stage 8 (PTX mma.sync)  : %8.3f ms  %6.2f TFLOPS  "
+                     ^
+
+flash_attention.cu(1444): error: expected a declaration
+              do { cudaError_t err = (cudaFree(d_O8)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1444): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1445): error: expected a declaration
+          }
+          ^
+
+flash_attention.cu(1508): warning #12-D: parsing restarts here after previous syntax error
+     ); } } while(0);
+                    ^
+
+flash_attention.cu(1509): error: expected a declaration
+      do { cudaError_t err = (cudaEventCreate(&stop)); if (err != cudaSuccess) { fprintf(
+      ^
+
+flash_attention.cu(1509): warning #12-D: parsing restarts here after previous syntax error
+     ); } } while(0);
+                    ^
+
+flash_attention.cu(1511): error: expected a declaration
+      for (int ci = 0; ci < num_configs; ci++) {
+      ^
+
+flash_attention.cu(1530): warning #12-D: parsing restarts here after previous syntax error
+                                                - 0.5f) * 0.1f;
+                                                              ^
+
+flash_attention.cu(1531): error: identifier "i" is undefined
+              h_K[i] = ((float)rand() / 
+                  ^
+
+flash_attention.cu(1533): error: expected a declaration
+          }
+          ^
+
+flash_attention.cu(1536): warning #12-D: parsing restarts here after previous syntax error
+          float *d_Q, *d_K, *d_V, *d_O, *d_O_ref;
+                                                ^
+
+flash_attention.cu(1537): error: expected a declaration
+          do { cudaError_t err = (cudaMalloc(&d_Q, qkv_bytes)); if (err != cudaSuccess) { fprintf(
+          ^
+
+flash_attention.cu(1537): warning #12-D: parsing restarts here after previous syntax error
+         ); } } while(0);
+                        ^
+
+flash_attention.cu(1538): error: expected a declaration
+          do { cudaError_t err = (cudaMalloc(&d_K, qkv_bytes)); if (err != cudaSuccess) { fprintf(
+          ^
+
+flash_attention.cu(1538): warning #12-D: parsing restarts here after previous syntax error
+         ); } } while(0);
+                        ^
+
+flash_attention.cu(1539): error: expected a declaration
+          do { cudaError_t err = (cudaMalloc(&d_V, qkv_bytes)); if (err != cudaSuccess) { fprintf(
+          ^
+
+flash_attention.cu(1539): warning #12-D: parsing restarts here after previous syntax error
+         ); } } while(0);
+                        ^
+
+flash_attention.cu(1540): error: expected a declaration
+          do { cudaError_t err = (cudaMalloc(&d_O, qkv_bytes)); if (err != cudaSuccess) { fprintf(
+          ^
+
+flash_attention.cu(1540): warning #12-D: parsing restarts here after previous syntax error
+         ); } } while(0);
+                        ^
+
+flash_attention.cu(1541): error: expected a declaration
+          do { cudaError_t err = (cudaMalloc(&d_O_ref, qkv_bytes)); if (err != cudaSuccess) { fprintf(
+          ^
+
+flash_attention.cu(1541): warning #12-D: parsing restarts here after previous syntax error
+         ); } } while(0);
+                        ^
+
+flash_attention.cu(1543): error: expected a declaration
+          do { cudaError_t err = (cudaMemcpy(d_Q, h_Q, qkv_bytes, cudaMemcpyHostToDevice)); if (err != cudaSuccess) { fprintf(
+          ^
+
+flash_attention.cu(1543): warning #12-D: parsing restarts here after previous syntax error
+         ); } } while(0);
+                        ^
+
+flash_attention.cu(1544): error: expected a declaration
+          do { cudaError_t err = (cudaMemcpy(d_K, h_K, qkv_bytes, cudaMemcpyHostToDevice)); if (err != cudaSuccess) { fprintf(
+          ^
+
+flash_attention.cu(1544): warning #12-D: parsing restarts here after previous syntax error
+         ); } } while(0);
+                        ^
+
+flash_attention.cu(1545): error: expected a declaration
+          do { cudaError_t err = (cudaMemcpy(d_V, h_V, qkv_bytes, cudaMemcpyHostToDevice)); if (err != cudaSuccess) { fprintf(
+          ^
+
+flash_attention.cu(1545): warning #12-D: parsing restarts here after previous syntax error
+         ); } } while(0);
+                        ^
+
+flash_attention.cu(1548): error: identifier "N" is undefined
+          size_t sp_bytes = (size_t)N * N * sizeof(float);
+                                    ^
+
+flash_attention.cu(1550): error: expected a declaration
+          do { cudaError_t err = (cudaMalloc(&d_S, sp_bytes)); if (err != cudaSuccess) { fprintf(
+          ^
+
+flash_attention.cu(1550): warning #12-D: parsing restarts here after previous syntax error
+         ); } } while(0);
+                        ^
+
+flash_attention.cu(1551): error: expected a declaration
+          do { cudaError_t err = (cudaMalloc(&d_P, sp_bytes)); if (err != cudaSuccess) { fprintf(
+          ^
+
+flash_attention.cu(1551): warning #12-D: parsing restarts here after previous syntax error
+         ); } } while(0);
+                        ^
+
+flash_attention.cu(1557): error: expected a declaration
+          do { cudaError_t err = (cudaMalloc(&d_Qh, qkv_half_bytes)); if (err != cudaSuccess) { fprintf(
+          ^
+
+flash_attention.cu(1557): warning #12-D: parsing restarts here after previous syntax error
+         ); } } while(0);
+                        ^
+
+flash_attention.cu(1558): error: expected a declaration
+          do { cudaError_t err = (cudaMalloc(&d_Kh, qkv_half_bytes)); if (err != cudaSuccess) { fprintf(
+          ^
+
+flash_attention.cu(1558): warning #12-D: parsing restarts here after previous syntax error
+         ); } } while(0);
+                        ^
+
+flash_attention.cu(1559): error: expected a declaration
+          do { cudaError_t err = (cudaMalloc(&d_Vh, qkv_half_bytes)); if (err != cudaSuccess) { fprintf(
+          ^
+
+flash_attention.cu(1559): warning #12-D: parsing restarts here after previous syntax error
+         ); } } while(0);
+                        ^
+
+flash_attention.cu(1560): error: expected a declaration
+          do { cudaError_t err = (cudaMalloc(&d_O3, qkv_bytes)); if (err != cudaSuccess) { fprintf(
+          ^
+
+flash_attention.cu(1560): warning #12-D: parsing restarts here after previous syntax error
+         ); } } while(0);
+                        ^
+
+flash_attention.cu(1565): error: this declaration has no storage class or type specifier
+          float2half_kernel<<<grid_conv, blk256>>>(d_Q, d_Qh, total_elems);
+          ^
+
+flash_attention.cu(1565): error: expected a ";"
+          float2half_kernel<<<grid_conv, blk256>>>(d_Q, d_Qh, total_elems);
+                           ^
+
+flash_attention.cu(1566): error: this declaration has no storage class or type specifier
+          float2half_kernel<<<grid_conv, blk256>>>(d_K, d_Kh, total_elems);
+          ^
+
+flash_attention.cu(1566): error: variable "float2half_kernel" has already been defined
+          float2half_kernel<<<grid_conv, blk256>>>(d_K, d_Kh, total_elems);
+          ^
+
+flash_attention.cu(1566): error: expected a ";"
+          float2half_kernel<<<grid_conv, blk256>>>(d_K, d_Kh, total_elems);
+                           ^
+
+flash_attention.cu(1567): error: this declaration has no storage class or type specifier
+          float2half_kernel<<<grid_conv, blk256>>>(d_V, d_Vh, total_elems);
+          ^
+
+flash_attention.cu(1567): error: variable "float2half_kernel" has already been defined
+          float2half_kernel<<<grid_conv, blk256>>>(d_V, d_Vh, total_elems);
+          ^
+
+flash_attention.cu(1567): error: expected a ";"
+          float2half_kernel<<<grid_conv, blk256>>>(d_V, d_Vh, total_elems);
+                           ^
+
+flash_attention.cu(1568): error: expected a declaration
+          do { cudaError_t err = (cudaDeviceSynchronize()); if (err != cudaSuccess) { fprintf(
+          ^
+
+flash_attention.cu(1568): warning #12-D: parsing restarts here after previous syntax error
+         ); } } while(0);
+                        ^
+
+flash_attention.cu(1571): error: identifier "qkv_bytes" is undefined
+          float* h_O_ref = (float*)malloc(qkv_bytes);
+                                          ^
+
+flash_attention.cu(1577): error: expected a declaration
+          {
+          ^
+
+flash_attention.cu(1584): error: expected a declaration
+             1
+             ^
+
+flash_attention.cu(1584): error: expected a declaration
+             ); } } while(0);
+                ^
+
+flash_attention.cu(1585): error: expected a declaration
+              for (int r = 0; r < iters; r++)
+              ^
+
+flash_attention.cu(1587): error: expected a declaration
+              do { cudaError_t err = (cudaEventRecord(stop)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1587): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1588): error: expected a declaration
+              do { cudaError_t err = (cudaEventSynchronize(stop)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1588): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1589): error: expected a declaration
+              do { cudaError_t err = (cudaEventElapsedTime(&ms, start, stop)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1589): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1590): error: this declaration has no storage class or type specifier
+              ms /= iters;
+              ^
+
+flash_attention.cu(1590): error: variable "ms" has already been defined
+              ms /= iters;
+              ^
+
+flash_attention.cu(1590): error: expected a ";"
+              ms /= iters;
+                 ^
+
+flash_attention.cu(1592): error: variable "tflops" has already been defined
+              double tflops = total_flops / (ms / 1000.0) / 1e12;
+                     ^
+
+flash_attention.cu(1593): error: this declaration has no storage class or type specifier
+              printf("  Stage 0 (Naive 3-kernel) : %8.3f ms  %6.2f TFLOPS\n", ms, tflops);
+              ^
+
+flash_attention.cu(1593): error: variable "printf" has already been defined
+              printf("  Stage 0 (Naive 3-kernel) : %8.3f ms  %6.2f TFLOPS\n", ms, tflops);
+              ^
+
+flash_attention.cu(1593): error: too many initializer values
+              printf("  Stage 0 (Naive 3-kernel) : %8.3f ms  %6.2f TFLOPS\n", ms, tflops);
+                                                                              ^
+
+flash_attention.cu(1593): error: a value of type "const char *" cannot be used to initialize an entity of type "int"
+              printf("  Stage 0 (Naive 3-kernel) : %8.3f ms  %6.2f TFLOPS\n", ms, tflops);
+                     ^
+
+flash_attention.cu(1596): error: expected a declaration
+              do { cudaError_t err = (cudaMemcpy(d_O_ref, d_O, qkv_bytes, cudaMemcpyDeviceToDevice)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1596): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1597): error: expected a declaration
+              do { cudaError_t err = (cudaMemcpy(h_O_ref, d_O, qkv_bytes, cudaMemcpyDeviceToHost)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1597): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1598): error: expected a declaration
+          }
+          ^
+
+flash_attention.cu(1608): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+              ^
+
+flash_attention.cu(1608): error: expected a declaration
+             ); } } while(0);
+                ^
+
+flash_attention.cu(1610): error: expected a declaration
+              do { cudaError_t err = (cudaMemset(d_O, 0, qkv_bytes)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1610): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1611): error: expected a declaration
+              do { cudaError_t err = (cudaEventRecord(start)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1611): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1612): error: expected a declaration
+              for (int r = 0; r < iters; r++)
+              ^
+
+flash_attention.cu(1614): error: expected a declaration
+              do { cudaError_t err = (cudaEventRecord(stop)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1614): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1615): error: expected a declaration
+              do { cudaError_t err = (cudaEventSynchronize(stop)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1615): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1616): error: expected a declaration
+              do { cudaError_t err = (cudaEventElapsedTime(&ms, start, stop)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1616): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1617): error: this declaration has no storage class or type specifier
+              ms /= iters;
+              ^
+
+flash_attention.cu(1617): error: variable "ms" has already been defined
+              ms /= iters;
+              ^
+
+flash_attention.cu(1617): error: expected a ";"
+              ms /= iters;
+                 ^
+
+flash_attention.cu(1619): error: variable "tflops" has already been defined
+              double tflops = total_flops / (ms / 1000.0) / 1e12;
+                     ^
+
+flash_attention.cu(1620): error: expected a declaration
+              do { cudaError_t err = (cudaMemcpy(h_O_test, d_O, qkv_bytes, cudaMemcpyDeviceToHost)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1620): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1621): error: variable "mae" has already been defined
+              float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
+                    ^
+
+flash_attention.cu(1622): error: variable "mre" has already been defined
+              float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
+                    ^
+
+flash_attention.cu(1623): error: this declaration has no storage class or type specifier
+              printf("  Stage 1 (Fused 1-thr/row): %8.3f ms  %6.2f TFLOPS  "
+              ^
+
+flash_attention.cu(1623): error: variable "printf" has already been defined
+              printf("  Stage 1 (Fused 1-thr/row): %8.3f ms  %6.2f TFLOPS  "
+              ^
+
+flash_attention.cu(1624): error: too many initializer values
+                     "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
+                                                       ^
+
+flash_attention.cu(1623): error: a value of type "const char *" cannot be used to initialize an entity of type "int"
+              printf("  Stage 1 (Fused 1-thr/row): %8.3f ms  %6.2f TFLOPS  "
+                     ^
+
+flash_attention.cu(1625): error: expected a declaration
+          }
+          ^
+
+flash_attention.cu(1635): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+              ^
+
+flash_attention.cu(1635): error: expected a declaration
+             ); } } while(0);
+                ^
+
+flash_attention.cu(1637): error: expected a declaration
+              do { cudaError_t err = (cudaMemset(d_O, 0, qkv_bytes)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1637): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1638): error: expected a declaration
+              do { cudaError_t err = (cudaEventRecord(start)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1638): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1639): error: expected a declaration
+              for (int r = 0; r < iters; r++)
+              ^
+
+flash_attention.cu(1641): error: expected a declaration
+              do { cudaError_t err = (cudaEventRecord(stop)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1641): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1642): error: expected a declaration
+              do { cudaError_t err = (cudaEventSynchronize(stop)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1642): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1643): error: expected a declaration
+              do { cudaError_t err = (cudaEventElapsedTime(&ms, start, stop)); if (err != cudaSuccess) { fprintf(
+              ^
+
+flash_attention.cu(1643): warning #12-D: parsing restarts here after previous syntax error
+             ); } } while(0);
+                            ^
+
+flash_attention.cu(1644): error: this declaration has no storage class or type specifier
+              ms /= iters;
+              ^
+
+flash_attention.cu(1644): error: variable "ms" has already been defined
+              ms /= iters;
+              ^
+
+flash_attention.cu(1644): error: expected a ";"
+              ms /= iters;
+                 ^
+
+Error limit reached.
+100 errors detected in the compilation of "flash_attention.cu".
+Compilation terminated.
+make: *** [Makefile:15: flash_attn] Error 4

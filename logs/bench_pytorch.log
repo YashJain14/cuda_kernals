@@ -7,15 +7,15 @@
 
   dtype = fp16  (matches Stage 3 / Stage 4 inputs)
   ----------------------------------------------------------
-  N= 1024     0.089 ms   96.59 TFLOPS
-  N= 2048     0.268 ms  128.27 TFLOPS
-  N= 4096     1.010 ms  136.03 TFLOPS
+  N= 1024     0.089 ms   96.20 TFLOPS
+  N= 2048     0.268 ms  128.12 TFLOPS
+  N= 4096     1.011 ms  135.95 TFLOPS
 
   dtype = fp32  (matches Stage 0/1/2 baseline)
   ----------------------------------------------------------
-  N= 1024     0.606 ms   14.17 TFLOPS
-  N= 2048     2.315 ms   14.84 TFLOPS
-  N= 4096     7.058 ms   19.47 TFLOPS
+  N= 1024     0.607 ms   14.15 TFLOPS
+  N= 2048     2.323 ms   14.79 TFLOPS
+  N= 4096     8.663 ms   15.86 TFLOPS
 
 ==============================================================
   Compare your Stage 4 TFLOPS to the fp16 numbers above.
