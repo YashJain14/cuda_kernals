@@ -2026,8 +2026,18 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
                                          Layout<Shape<Int<BR>, Int<BC>>,
                                                 Stride<Int<BC>, _1>>{});
             
+            // sV_cur is Shape<BC, D>. For GEMM-II we compute P @ V.
+            // In CuTe, the B operand of gemm expects shape (N, K).
+            // We want the inner product over K=BC, and output over N=D.
+            // If we pass sV_cur directly, CuTe binds N=BC, K=D, computing P @ V^T.
+            // We must logically transpose sV_cur to Shape<D, BC> so K=BC, N=D.
+            auto sV_trans = make_tensor(sV_cur.data(), 
+                                        composition(sV_cur.layout(), 
+                                                    Layout<Shape<Int<D>, Int<BC>>, 
+                                                           Stride<_1, Int<D>>>{}));
+
             auto tOrP = thr_mma.partition_fragment_A(sP_tensor);
-            auto tOrV = thr_mma.partition_fragment_B(sV_cur);
+            auto tOrV = thr_mma.partition_fragment_B(sV_trans);
 
             auto smem_tiled_copy_PA = make_tiled_copy_A(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_PA  = smem_tiled_copy_PA.get_thread_slice(tid);
@@ -2035,7 +2045,7 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
 
             auto smem_tiled_copy_V = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_V   = smem_tiled_copy_V.get_thread_slice(tid);
-            auto tVsV = smem_thr_copy_V.partition_S(sV_cur);
+            auto tVsV = smem_thr_copy_V.partition_S(sV_trans);
 
             auto tOrP_copy = smem_thr_copy_PA.retile_D(tOrP);
             auto tOrV_copy = smem_thr_copy_V.retile_D(tOrV);
