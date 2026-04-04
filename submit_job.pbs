@@ -54,7 +54,7 @@ echo "Build OK"
 echo ""
 
 # ── CUDA benchmark ────────────────────────────────────────────────────────────
-echo "--- CUDA benchmark: Stages 0-6 ---"
+echo "--- CUDA benchmark: Stages 0-9 ---"
 ./flash_attn 2>&1 | tee "$LOG_DIR/bench_cuda.log"
 echo ""
 
@@ -116,6 +116,7 @@ S5=$(awk '/N = 4096/{p=1} p && /Stage 5/{match($0,/[0-9]+\.[0-9]+ ms/); print su
 S6=$(awk '/N = 4096/{p=1} p && /Stage 6/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_cuda.log")
 S7=$(awk '/N = 4096/{p=1} p && /Stage 7/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_cuda.log")
 S8=$(awk '/N = 4096/{p=1} p && /Stage 8/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_cuda.log")
+S9=$(awk '/N = 4096/{p=1} p && /Stage 9/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_cuda.log")
 
 T0=$(awk '/N = 4096/{p=1} p && /Stage 0/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
 T1=$(awk '/N = 4096/{p=1} p && /Stage 1/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
@@ -126,6 +127,7 @@ T5=$(awk '/N = 4096/{p=1} p && /Stage 5/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); prin
 T6=$(awk '/N = 4096/{p=1} p && /Stage 6/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
 T7=$(awk '/N = 4096/{p=1} p && /Stage 7/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
 T8=$(awk '/N = 4096/{p=1} p && /Stage 8/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
+T9=$(awk '/N = 4096/{p=1} p && /Stage 9/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
 
 PT=$(awk '/dtype = fp16/{p=1} p && /N= *4096/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_pytorch.log")
 PT_T=$(awk '/dtype = fp16/{p=1} p && /N= *4096/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_pytorch.log")
@@ -140,14 +142,16 @@ printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 5 (FA-2 deferred):"  "${S5:----}"  
 printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 6 (async dbl-buf):"  "${S6:----}"  "${T6:----}"
 printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 7 (Smem Padded):"    "${S7:----}"  "${T7:----}"
 printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 8 (PTX mma.sync):"  "${S8:----}"  "${T8:----}"
+printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 9 (CuTe FA-2):"  "${S9:----}"  "${T9:----}"
 printf "  %-28s %8s ms   %s TFLOPS\n" "PyTorch SDPA fp16:"        "${PT:----}"  "${PT_T:----}"
 printf "  %-28s %8s ms   %s TFLOPS\n" "cuBLAS ceiling:"           "—"           "${CB:----}"
 echo ""
 
-BEST_S="${S8:-$S7}"
-BEST_T="${T8:-$T7}"
-BEST_NAME="Stage 8"
-[ -z "$S8" ] && BEST_NAME="Stage 7"
+BEST_S="${S9:-${S8:-$S7}}"
+BEST_T="${T9:-${T8:-$T7}}"
+BEST_NAME="Stage 9"
+[ -z "$S9" ] && BEST_NAME="Stage 8"
+[ -z "$S9" ] && [ -z "$S8" ] && BEST_NAME="Stage 7"
 
 [ -n "$S0" ] && [ -n "$BEST_S" ] && [ "$BEST_S" != "0" ] && \
     awk -v a="$S0" -v b="$BEST_S" -v n="$BEST_NAME" \
@@ -155,6 +159,9 @@ BEST_NAME="Stage 8"
 [ -n "$S7" ] && [ -n "$S8" ] && [ "$S8" != "0" ] && \
     awk -v a="$S7" -v b="$S8" \
         'BEGIN{printf "  Stage 8 vs Stage 7:    %.2fx faster\n", a/b}'
+[ -n "$S8" ] && [ -n "$S9" ] && [ "$S9" != "0" ] && \
+    awk -v a="$S8" -v b="$S9" \
+        'BEGIN{printf "  Stage 9 vs Stage 8:    %.2fx faster\n", a/b}'
 [ -n "$BEST_S" ] && [ -n "$PT" ] && [ "$PT" != "0" ] && \
     awk -v s="$BEST_S" -v p="$PT" -v n="$BEST_NAME" \
         'BEGIN{printf "  %s vs PyTorch:    %.1fx slower  (%.1f%% of FA-2)\n", n, s/p, p/s*100}'

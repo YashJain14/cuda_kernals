@@ -1678,6 +1678,431 @@ void launch_flash_v8(const half* d_Q, const half* d_K, const half* d_V,
         1.0f / sqrtf((float)HEAD_DIM));
 }
 
+// ============================================================
+//  STAGE 9: CuTe-based FlashAttention-2 Forward (sm_80)
+//
+//  Optimizations demonstrated via library abstractions:
+//  1. CuTe TiledMMA with SM80_16x8x16 atom — correct fragment
+//     layout matching between GEMM-I output and GEMM-II input
+//  2. Register-resident O accumulator across KV tile loop
+//  3. In-register online softmax (no sS/sP materialization)
+//  4. cp.async pipelined GMEM→SMEM with double-buffering
+//  5. Swizzled smem layout via CuTe Swizzle — zero bank conflicts
+//     without padding overhead
+//  6. BR=128, BC=64 tiles for high arithmetic intensity
+// ============================================================
+
+#include <cuda_runtime.h>
+#include <cuda_fp16.h>
+#include <cstdio>
+#include <cmath>
+
+// CuTe headers (header-only from CUTLASS 3.x)
+#include <cute/tensor.hpp>
+#include <cute/atom/mma_atom.hpp>
+#include <cute/atom/copy_atom.hpp>
+#include <cute/algorithm/gemm.hpp>
+#include <cute/algorithm/copy.hpp>
+#include <cute/swizzle.hpp>
+
+using namespace cute;
+
+// ── Configuration ──
+static constexpr int BR    = 128;
+static constexpr int BC    = 64;
+static constexpr int D     = 64;
+static constexpr int NWARP = 8;
+static constexpr int BLK   = NWARP * 32;  // 256 threads
+
+#define CUDA_CHECK(call) do {                                        \
+    cudaError_t err = (call);                                        \
+    if (err != cudaSuccess) {                                        \
+        fprintf(stderr, "CUDA error %s:%d: %s\n",                   \
+                __FILE__, __LINE__, cudaGetErrorString(err));        \
+        exit(EXIT_FAILURE);                                          \
+    }                                                                \
+} while(0)
+
+// ── Smem layouts with swizzle for bank-conflict-free access ──
+// Swizzle<B,M,S>: XOR bits [B+M, B+M+S) of coord with bits [B, B+M)
+// For half (2 bytes), 32 banks × 4 bytes = 128B per bank set
+// Swizzle<3,3,3> works well for 64-wide half rows
+using SmemLayoutAtom = decltype(
+    composition(Swizzle<3,3,3>{},
+                Layout<Shape<_8, _64>,
+                       Stride<_64, _1>>{}));
+
+using SmemLayoutQ  = decltype(tile_to_shape(SmemLayoutAtom{},
+                              Shape<Int<BR>, Int<D>>{}));
+using SmemLayoutKV = decltype(tile_to_shape(SmemLayoutAtom{},
+                              Shape<Int<BC>, Int<D>>{}));
+
+// ── MMA definition ──
+// SM80_16x8x16: A=row-major 16×16 half, B=col-major 16×8 half, C=16×8 fp32
+// This atom's C layout naturally matches the A layout of the next MMA,
+// enabling direct register transfer from GEMM-I → softmax → GEMM-II
+using MMA_Atom_t = MMA_Atom<SM80_16x8x16_F32F16F16F32_TN>;
+using TiledMMA_t = decltype(make_tiled_mma(
+    MMA_Atom_t{},
+    // Thread layout: 4 warps along M, 2 along N
+    Layout<Shape<_4, _2, _1>>{}));
+
+// ── Copy atoms for GMEM→SMEM (cp.async 128-bit) ──
+using GmemCopyAtom = Copy_Atom<SM80_CP_ASYNC_CACHEALWAYS<cute::uint128_t>, half_t>;
+
+// ── Copy atoms for SMEM→RMEM ──
+using SmemCopyAtom = Copy_Atom<DefaultCopy, half_t>;
+
+// ── Shared memory struct ──
+struct SharedStorage {
+    cute::array_aligned<half_t, cosize_v<SmemLayoutQ>>  sQ;
+    cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sK0;
+    cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sK1;
+    cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sV0;
+    cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sV1;
+};
+
+// ── Helper: in-register row-wise reduce (max or sum) across MMA fragments ──
+template <typename Fragment>
+__device__ __forceinline__
+void row_max_reduce(Fragment& frag_max, const Fragment& frag_src, int num_cols) {
+    // MMA m16n8k16 output layout: each thread holds elements for specific rows
+    // Threads with same (lane_id / 4) share the same row
+    // Need to reduce across lane_id % 4 (4 threads per row)
+    CUTE_UNROLL
+    for (int i = 0; i < size(frag_max); i += 2) {
+        // Elements i, i+1 are same row (consecutive columns in 16×8 tile)
+        float val = fmaxf(frag_src(i), frag_src(i + 1));
+        frag_max(i) = fmaxf(frag_max(i), val);
+    }
+}
+
+// ── The kernel ──
+__global__ void __launch_bounds__(BLK, 1)
+flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
+                     const half_t* __restrict__ gK_ptr,
+                     const half_t* __restrict__ gV_ptr,
+                     float* __restrict__        gO_ptr,
+                     int N, float scale) {
+    int bh      = blockIdx.y;
+    int q_tile  = blockIdx.x;
+    int q_start = q_tile * BR;
+    if (q_start >= N) return;
+
+    int tid     = threadIdx.x;
+    int offset  = bh * N * D;
+
+    extern __shared__ char smem_raw[];
+    SharedStorage& smem = *reinterpret_cast<SharedStorage*>(smem_raw);
+
+    // ── Build CuTe tensors ──
+    // Global tensors for this batch-head
+    auto gQ = make_tensor(make_gmem_ptr(gQ_ptr + offset + q_start * D),
+                          Shape<Int<BR>, Int<D>>{},
+                          Stride<Int<D>, _1>{});
+
+    // Shared memory tensors
+    auto sQ  = make_tensor(make_smem_ptr(smem.sQ.data()),  SmemLayoutQ{});
+    auto sK  = make_tensor(make_smem_ptr(smem.sK0.data()), SmemLayoutKV{});  // will alternate
+    auto sV  = make_tensor(make_smem_ptr(smem.sV0.data()), SmemLayoutKV{});
+
+    // ── Tiled copy: GMEM→SMEM ──
+    auto gmem_tiled_copy = make_tiled_copy(
+        GmemCopyAtom{},
+        Layout<Shape<_32, _8>, Stride<_8, _1>>{},   // thread layout
+        Layout<Shape<_1, _8>>{}                      // value layout (128 bits = 8 halfs)
+    );
+    auto gmem_thr_copy = gmem_tiled_copy.get_thread_slice(tid);
+
+// ── Copy Q to smem ──
+    {
+        auto tQgQ = gmem_thr_copy.partition_S(gQ);
+        auto tQsQ = gmem_thr_copy.partition_D(sQ);
+        copy(gmem_tiled_copy, tQgQ, tQsQ);
+        cp_async_fence();
+        cp_async_wait<0>();
+    }
+    __syncthreads();
+    // ── Setup MMA ──
+    TiledMMA_t tiled_mma;
+    auto thr_mma = tiled_mma.get_thread_slice(tid);
+
+    // Q fragments from smem (persistent across KV loop)
+    auto tSrQ = thr_mma.partition_fragment_A(sQ);    // (MMA, M, K)
+
+    // ── Register-resident O accumulator — zero-initialized ──
+    // Shape matches GEMM-II output: (MMA, M, N_d) where N_d tiles over D
+    auto rO = partition_fragment_C(tiled_mma, Shape<Int<BR>, Int<D>>{});
+    clear(rO);
+
+    // ── Register-resident softmax state ──
+    // Number of rows this thread is responsible for
+    constexpr int kMmaM = decltype(size<1>(rO))::value;
+    // Each MMA tile row has 2 output elements (rows 0..7 and 8..15)
+    // Total unique rows per thread = kMmaM * 2
+    // float row_max[size(rO) > 0 ? size<0>(rO) * kMmaM : 1];
+    // float row_sum[size(rO) > 0 ? size<0>(rO) * kMmaM : 1];
+
+    // Actually — simpler: track per output-row of this thread's MMA partition
+    // The fragment layout from partition_fragment_C has shape (MMA=4, MMA_M, MMA_N)
+    // where dim0=4 corresponds to the 4 outputs per m16n8k16 per thread
+    // Elements [0],[1] are from row r0; [2],[3] are from row r8
+    // Across MMA_M tiles, we cover different 16-row blocks
+
+    // For online softmax, we need max & sum per *row*.
+    // Total unique rows this thread touches = MMA_M * 2 (r0 and r8 per tile)
+    constexpr int ROWS_PER_THR = kMmaM * 2;
+    float r_max[ROWS_PER_THR];
+    float r_sum[ROWS_PER_THR];
+    for (int i = 0; i < ROWS_PER_THR; i++) {
+        r_max[i] = -INFINITY;
+        r_sum[i] = 0.0f;
+    }
+
+    // ── KV tile loop ──
+    int Tc = (N + BC - 1) / BC;
+
+    for (int j = 0; j < Tc; j++) {
+        int kv_start = j * BC;
+
+        // Pick double-buffer slot
+        half_t* sK_ptr = (j & 1) ? smem.sK1.data() : smem.sK0.data();
+        half_t* sV_ptr = (j & 1) ? smem.sV1.data() : smem.sV0.data();
+
+        // Load K, V tile to smem
+        {
+            auto gK_tile = make_tensor(
+                make_gmem_ptr(gK_ptr + offset + kv_start * D),
+                Shape<Int<BC>, Int<D>>{}, Stride<Int<D>, _1>{});
+            auto gV_tile = make_tensor(
+                make_gmem_ptr(gV_ptr + offset + kv_start * D),
+                Shape<Int<BC>, Int<D>>{}, Stride<Int<D>, _1>{});
+
+            auto sK_cur = make_tensor(make_smem_ptr(sK_ptr), SmemLayoutKV{});
+            auto sV_cur = make_tensor(make_smem_ptr(sV_ptr), SmemLayoutKV{});
+
+            auto tKgK = gmem_thr_copy.partition_S(gK_tile);
+            auto tKsK = gmem_thr_copy.partition_D(sK_cur);
+            auto tVgV = gmem_thr_copy.partition_S(gV_tile);
+            auto tVsV = gmem_thr_copy.partition_D(sV_cur);
+
+            copy(gmem_tiled_copy, tKgK, tKsK);
+            copy(gmem_tiled_copy, tVgV, tVsV);
+            cp_async_fence();
+            cp_async_wait<0>();
+        }
+        __syncthreads();
+
+        auto sK_cur = make_tensor(make_smem_ptr(sK_ptr), SmemLayoutKV{});
+        auto sV_cur = make_tensor(make_smem_ptr(sV_ptr), SmemLayoutKV{});
+
+        // ══ GEMM-I: S = Q @ K^T — result stays in registers ══
+        auto rS = partition_fragment_C(tiled_mma, Shape<Int<BR>, Int<BC>>{});
+        clear(rS);
+
+        // K fragments partitioned as B operand (col-major / transposed)
+        auto tSrK = thr_mma.partition_fragment_B(sK_cur);  // (MMA, N, K)
+
+        // Load Q from smem to registers and compute S = Q @ K^T
+        {
+            auto smem_tiled_copy_Q = make_tiled_copy_A(SmemCopyAtom{}, tiled_mma);
+            auto smem_thr_copy_Q   = smem_tiled_copy_Q.get_thread_slice(tid);
+            auto tSsQ = smem_thr_copy_Q.partition_S(sQ);
+
+            auto smem_tiled_copy_K = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
+            auto smem_thr_copy_K   = smem_tiled_copy_K.get_thread_slice(tid);
+            auto tSsK = smem_thr_copy_K.partition_S(sK_cur);
+
+            auto tSrQ_copy = smem_thr_copy_Q.retile_D(tSrQ);
+            auto tSrK_copy = smem_thr_copy_K.retile_D(tSrK);
+
+            // K-dimension loop
+            CUTE_UNROLL
+            for (int k = 0; k < size<2>(tSrQ); k++) {
+                copy(smem_tiled_copy_Q, tSsQ(_, _, k), tSrQ_copy(_, _, k));
+                copy(smem_tiled_copy_K, tSsK(_, _, k), tSrK_copy(_, _, k));
+                gemm(tiled_mma, tSrQ(_, _, k), tSrK(_, _, k), rS);
+            }
+        }
+
+        // Apply scale
+        CUTE_UNROLL
+        for (int i = 0; i < size(rS); i++) {
+            rS(i) *= scale;
+        }
+
+        // ══ IN-REGISTER ONLINE SOFTMAX ══
+        // rS has shape (MMA=4, MMA_M, MMA_N)
+        // For m16n8k16: elements [0],[1] → row r0; [2],[3] → row r8
+        // MMA_M tiles index different 16-row blocks
+        // MMA_N tiles index different 8-col blocks across BC
+
+        // Step 1: find row max from rS
+        CUTE_UNROLL
+        for (int mi = 0; mi < size<1>(rS); mi++) {
+            float lmax_r0 = -INFINITY, lmax_r8 = -INFINITY;
+            CUTE_UNROLL
+            for (int ni = 0; ni < size<2>(rS); ni++) {
+                lmax_r0 = fmaxf(lmax_r0, fmaxf(rS(0, mi, ni), rS(1, mi, ni)));
+                lmax_r8 = fmaxf(lmax_r8, fmaxf(rS(2, mi, ni), rS(3, mi, ni)));
+            }
+            // Cross-thread reduction: threads sharing same row (lane_id%4 varies)
+            lmax_r0 = fmaxf(lmax_r0, __shfl_xor_sync(0xffffffff, lmax_r0, 1));
+            lmax_r0 = fmaxf(lmax_r0, __shfl_xor_sync(0xffffffff, lmax_r0, 2));
+            lmax_r8 = fmaxf(lmax_r8, __shfl_xor_sync(0xffffffff, lmax_r8, 1));
+            lmax_r8 = fmaxf(lmax_r8, __shfl_xor_sync(0xffffffff, lmax_r8, 2));
+
+            int ri0 = mi * 2, ri1 = mi * 2 + 1;
+            float m_old_r0 = r_max[ri0], m_new_r0 = fmaxf(m_old_r0, lmax_r0);
+            float m_old_r8 = r_max[ri1], m_new_r8 = fmaxf(m_old_r8, lmax_r8);
+            float corr_r0 = __expf(m_old_r0 - m_new_r0);
+            float corr_r8 = __expf(m_old_r8 - m_new_r8);
+
+            // Rescale running O accumulators for this row
+            CUTE_UNROLL
+            for (int di = 0; di < size<2>(rO); di++) {
+                rO(0, mi, di) *= corr_r0; rO(1, mi, di) *= corr_r0;
+                rO(2, mi, di) *= corr_r8; rO(3, mi, di) *= corr_r8;
+            }
+            r_sum[ri0] *= corr_r0;
+            r_sum[ri1] *= corr_r8;
+            r_max[ri0] = m_new_r0;
+            r_max[ri1] = m_new_r8;
+
+            // Compute exp, accumulate sum
+            float lsum_r0 = 0.0f, lsum_r8 = 0.0f;
+            CUTE_UNROLL
+            for (int ni = 0; ni < size<2>(rS); ni++) {
+                float p0 = __expf(rS(0, mi, ni) - m_new_r0);
+                float p1 = __expf(rS(1, mi, ni) - m_new_r0);
+                float p2 = __expf(rS(2, mi, ni) - m_new_r8);
+                float p3 = __expf(rS(3, mi, ni) - m_new_r8);
+                lsum_r0 += p0 + p1;
+                lsum_r8 += p2 + p3;
+                rS(0, mi, ni) = p0; rS(1, mi, ni) = p1;
+                rS(2, mi, ni) = p2; rS(3, mi, ni) = p3;
+            }
+            lsum_r0 += __shfl_xor_sync(0xffffffff, lsum_r0, 1);
+            lsum_r0 += __shfl_xor_sync(0xffffffff, lsum_r0, 2);
+            lsum_r8 += __shfl_xor_sync(0xffffffff, lsum_r8, 1);
+            lsum_r8 += __shfl_xor_sync(0xffffffff, lsum_r8, 2);
+            r_sum[ri0] += lsum_r0;
+            r_sum[ri1] += lsum_r8;
+        }
+
+        // ══ GEMM-II: O += P @ V ══
+        // P is in rS (now holding exp values), need to convert to half
+        // and stage through smem for correct MMA A-operand layout.
+        // Reuse sK buffer (GEMM-I is done with it).
+
+        // Convert P to half and write to smem in row-major layout
+        auto sP = make_tensor(make_smem_ptr(sK_ptr),
+                              Layout<Shape<Int<BR>, Int<BC>>,
+                                     Stride<Int<BC>, _1>>{});
+
+        // Use MMA's C→smem copy to write rS (P values) to smem
+        auto smem_tiled_copy_P = make_tiled_copy_C(SmemCopyAtom{}, tiled_mma);
+        auto smem_thr_copy_P   = smem_tiled_copy_P.get_thread_slice(tid);
+        auto tPsP = smem_thr_copy_P.partition_D(sP);
+
+        // Convert rS from fp32 to fp16 in-place fragment, then copy to smem
+        // We need a half-typed fragment
+        auto rP = make_fragment_like<half_t>(rS);
+        CUTE_UNROLL
+        for (int i = 0; i < size(rS); i++) {
+            rP(i) = __float2half(rS(i));
+        }
+        auto tPrP = smem_thr_copy_P.retile_S(rP);
+        copy(smem_tiled_copy_P, tPrP, tPsP);
+        __syncthreads();
+
+        // Now load P from smem as A operand, V from smem as B operand
+        auto tOrP = thr_mma.partition_fragment_A(sP);   // (MMA, M, K)
+        auto tOrV = thr_mma.partition_fragment_B(sV_cur); // (MMA, N, K)
+
+        {
+            auto smem_tiled_copy_PA = make_tiled_copy_A(SmemCopyAtom{}, tiled_mma);
+            auto smem_thr_copy_PA  = smem_tiled_copy_PA.get_thread_slice(tid);
+            auto tPsPA = smem_thr_copy_PA.partition_S(sP);
+
+            auto smem_tiled_copy_V = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
+            auto smem_thr_copy_V   = smem_tiled_copy_V.get_thread_slice(tid);
+            auto tVsV = smem_thr_copy_V.partition_S(sV_cur);
+
+            auto tOrP_copy = smem_thr_copy_PA.retile_D(tOrP);
+            auto tOrV_copy = smem_thr_copy_V.retile_D(tOrV);
+
+            CUTE_UNROLL
+            for (int k = 0; k < size<2>(tOrP); k++) {
+                copy(smem_tiled_copy_PA, tPsPA(_, _, k), tOrP_copy(_, _, k));
+                copy(smem_tiled_copy_V,  tVsV(_, _, k),  tOrV_copy(_, _, k));
+                gemm(tiled_mma, tOrP(_, _, k), tOrV(_, _, k), rO);
+            }
+        }
+        __syncthreads();
+    } // end KV loop
+
+    // ══ Epilogue: normalize O by row_sum, write to GMEM ══
+    CUTE_UNROLL
+    for (int mi = 0; mi < size<1>(rO); mi++) {
+        float inv_l_r0 = 1.0f / r_sum[mi * 2];
+        float inv_l_r8 = 1.0f / r_sum[mi * 2 + 1];
+        CUTE_UNROLL
+        for (int di = 0; di < size<2>(rO); di++) {
+            rO(0, mi, di) *= inv_l_r0; rO(1, mi, di) *= inv_l_r0;
+            rO(2, mi, di) *= inv_l_r8; rO(3, mi, di) *= inv_l_r8;
+        }
+    }
+
+    // Write O to global memory
+    // Decode MMA thread→global mapping
+    int lane_id = tid % 32;
+    int warp_id = tid / 32;
+    int wr = warp_id / 2;  // row warp (0..3), each covers 32 rows
+    int wc = warp_id % 2;  // col warp (0..1), each covers 32 cols
+
+    int mma_r0 = lane_id / 4;
+    int mma_r8 = mma_r0 + 8;
+    int mma_c0 = (lane_id % 4) * 2;
+    int mma_c1 = mma_c0 + 1;
+
+    CUTE_UNROLL
+    for (int mi = 0; mi < size<1>(rO); mi++) {
+        CUTE_UNROLL
+        for (int ni = 0; ni < size<2>(rO); ni++) {
+            int row0 = q_start + wr * 32 + mi * 16 + mma_r0;
+            int row8 = q_start + wr * 32 + mi * 16 + mma_r8;
+            int col  = wc * 32 + ni * 8 + mma_c0;
+            int col1 = wc * 32 + ni * 8 + mma_c1;
+
+            if (row0 < N && col < D)
+                gO_ptr[offset + row0 * D + col]  = rO(0, mi, ni);
+            if (row0 < N && col1 < D)
+                gO_ptr[offset + row0 * D + col1] = rO(1, mi, ni);
+            if (row8 < N && col < D)
+                gO_ptr[offset + row8 * D + col]  = rO(2, mi, ni);
+            if (row8 < N && col1 < D)
+                gO_ptr[offset + row8 * D + col1] = rO(3, mi, ni);
+        }
+    }
+}
+
+// ── Launcher (extern "C" linkage for main file) ──
+extern "C"
+void launch_flash_v9(const half* d_Q, const half* d_K, const half* d_V,
+                     float* d_O, int B_nh, int N) {
+    dim3 grid((N + BR - 1) / BR, B_nh);
+    dim3 block(BLK);
+    size_t smem = sizeof(SharedStorage);
+    CUDA_CHECK(cudaFuncSetAttribute(flash_v9_cute_kernel,
+        cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
+    flash_v9_cute_kernel<<<grid, block, smem>>>(
+        reinterpret_cast<const half_t*>(d_Q),
+        reinterpret_cast<const half_t*>(d_K),
+        reinterpret_cast<const half_t*>(d_V),
+        d_O, N, 1.0f / sqrtf((float)D));
+}
+
 
 // ============================================================
 //  Utility: float ↔ half conversion kernels
@@ -2063,6 +2488,38 @@ int main(int argc, char** argv) {
                    "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
             CUDA_CHECK(cudaFree(d_O8));
         }
+
+        // ==========================================================
+        //  STAGE 9: Register-Resident O + In-Register Softmax
+        // ==========================================================
+        {
+            float ms = 0.0f;
+            float* d_O9;
+            CUDA_CHECK(cudaMalloc(&d_O9, qkv_bytes));
+            CUDA_CHECK(cudaMemset(d_O9, 0, qkv_bytes));
+            for (int r = 0; r < warmup; r++)
+                launch_flash_v9(d_Qh, d_Kh, d_Vh, d_O9, B_nh, N);
+            CUDA_CHECK(cudaDeviceSynchronize());
+
+            CUDA_CHECK(cudaMemset(d_O9, 0, qkv_bytes));
+            CUDA_CHECK(cudaEventRecord(start));
+            for (int r = 0; r < iters; r++)
+                launch_flash_v9(d_Qh, d_Kh, d_Vh, d_O9, B_nh, N);
+            CUDA_CHECK(cudaEventRecord(stop));
+            CUDA_CHECK(cudaEventSynchronize(stop));
+            CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
+            ms /= iters;
+
+            double tflops = total_flops / (ms / 1000.0) / 1e12;
+            CUDA_CHECK(cudaMemcpy(h_O_test, d_O9, qkv_bytes, cudaMemcpyDeviceToHost));
+            float mae = max_abs_error(h_O_ref, h_O_test, total_elems);
+            float mre = mean_rel_error(h_O_ref, h_O_test, total_elems);
+            printf("  Stage 9 (CuTe FA-2)    : %8.3f ms  %6.2f TFLOPS  "
+                   "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
+            CUDA_CHECK(cudaFree(d_O9));
+        }
+
+        
         printf("\n");
 
         // ----- Cleanup per sequence length -----
