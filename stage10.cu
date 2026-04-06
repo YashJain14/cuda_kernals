@@ -50,7 +50,7 @@ struct SharedStorage {
     cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sK1;
     cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sV0;
     cute::array_aligned<half_t, cosize_v<SmemLayoutKV>> sV1;
-    // sP is removed, saving 8KB of Shared Memory
+    cute::array_aligned<half_t, cosize_v<SmemLayoutP>>  sP;
 };
 
 __global__ void __launch_bounds__(BLK, 1)
@@ -223,27 +223,30 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
         }
 
         {
-            // --- OPTIMIZATION 1: In-Register Softmax to Operand A layout cast ---
-            // Convert rS (Float C-Fragment) to rS_half (Half C-Fragment)
+            // --- FIX: Proper SMEM Roundtrip for P ---
+            // 1. Convert rS to half
+            auto sP = make_tensor(make_smem_ptr(smem.sP.data()), SmemLayoutP{});
             auto rS_half = make_tensor_like<half_t>(rS);
             CUTE_UNROLL
             for (int i = 0; i < size(rS); i++) rS_half(i) = __float2half(rS(i));
             
-            // Dummy layout to get the correct A-Fragment register layout for the GEMM
-            using SmemLayoutP = decltype(tile_to_shape(SmemLayoutAtom{}, Shape<Int<BR>, Int<BC>>{}));
-            auto dummy_sP = make_tensor(make_smem_ptr(static_cast<half_t*>(nullptr)), SmemLayoutP{});
-            auto rP = thr_mma.partition_fragment_A(dummy_sP);
-            
-            // CuTe magic: Directly cast the C fragment layout to the A fragment layout in registers!
-            // No Shared Memory required!
-            cute::copy(rS_half, rP);
+            // 2. Write rS_half to sP
+            auto smem_tiled_copy_P_C = make_tiled_copy_C(SmemCopyAtom{}, tiled_mma);
+            auto smem_thr_copy_P_C   = smem_tiled_copy_P_C.get_thread_slice(tid);
+            auto tSrS_P = smem_thr_copy_P_C.retile_S(rS_half);
+            auto tSsP_C = smem_thr_copy_P_C.partition_D(sP);
+            copy(smem_tiled_copy_P_C, tSrS_P, tSsP_C);
+            __syncthreads();
 
-            // --- OPTIMIZATION 2: Correctly Transpose V for Operand B ---
-            // sV_cur is shape (BC, D). Operand B must be (N, K). So we need (D, BC).
-            // We compose the layout with a transpose step to logically swap the dimensions
-            auto sV_trans = make_tensor(sV_cur.data(), 
-                                        composition(sV_cur.layout(), 
-                                                    make_layout(Shape<Int<D>, Int<BC>>{}, Stride<_1, Int<D>>{})));
+            // 3. Read P back into rP using Operand A layout
+            auto rP = thr_mma.partition_fragment_A(sP);
+            auto smem_tiled_copy_P_A = make_tiled_copy_A(SmemCopyAtom{}, tiled_mma);
+            auto smem_thr_copy_P_A   = smem_tiled_copy_P_A.get_thread_slice(tid);
+            auto tSsP_A = smem_thr_copy_P_A.partition_S(sP);
+            auto tSrP_copy = smem_thr_copy_P_A.retile_D(rP);
+
+            // --- OPTIMIZATION: Correctly Transpose V for Operand B ---
+            auto sV_trans = make_tensor(sV_cur.data(), make_layout(get<1>(sV_cur.layout()), get<0>(sV_cur.layout())));
                                         
             auto rV = thr_mma.partition_fragment_B(sV_trans);
             auto smem_tiled_copy_V = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
@@ -253,6 +256,7 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
 
             CUTE_UNROLL
             for (int k = 0; k < size<2>(rP); k++) {
+                copy(smem_tiled_copy_P_A, tSsP_A(_, _, k), tSrP_copy(_, _, k));
                 copy(smem_tiled_copy_V, tSsV(_, _, k), tSrV_copy(_, _, k));
                 gemm(tiled_mma, rP(_, _, k), rV(_, _, k), rO);
             }
