@@ -34,9 +34,12 @@ static constexpr int BLK   = NWARP * 32;
 using SmemLayoutAtom = decltype(composition(Swizzle<3,3,3>{}, Layout<Shape<_8, _64>, Stride<_64, _1>>{}));
 using SmemLayoutQ  = decltype(tile_to_shape(SmemLayoutAtom{}, Shape<Int<BR>, Int<D>>{}));
 using SmemLayoutKV = decltype(tile_to_shape(SmemLayoutAtom{}, Shape<Int<BC>, Int<D>>{}));
+using SmemLayoutP  = decltype(tile_to_shape(SmemLayoutAtom{}, Shape<Int<BR>, Int<BC>>{}));
 
-// NOTE: We eliminated SmemLayoutP entirely! The probability matrix P 
-// will now stay entirely in the fast register file, skipping the SMEM round-trip.
+// Transposed layout for V to be used as Operand B in GEMM-II
+using SmemLayoutVTrans = decltype(tile_to_shape(SmemLayoutAtom{},
+                                  Shape<Int<D>, Int<BC>>{},
+                                  Step<_2, _1>{}));
 
 using MMA_Atom_t = MMA_Atom<SM80_16x8x16_F32F16F16F32_TN>;
 using TiledMMA_t = decltype(make_tiled_mma(MMA_Atom_t{}, Layout<Shape<_8, _1, _1>>{}));
@@ -231,11 +234,8 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
             for (int i = 0; i < size(rS); i++) rS_half(i) = __float2half(rS(i));
             
             // 2. Write rS_half to sP
-            auto smem_tiled_copy_P_C = make_tiled_copy_C(SmemCopyAtom{}, tiled_mma);
-            auto smem_thr_copy_P_C   = smem_tiled_copy_P_C.get_thread_slice(tid);
-            auto tSrS_P = smem_thr_copy_P_C.retile_S(rS_half);
-            auto tSsP_C = smem_thr_copy_P_C.partition_D(sP);
-            copy(smem_tiled_copy_P_C, tSrS_P, tSsP_C);
+            auto tCsP = thr_mma.partition_C(sP);
+            cute::copy(rS_half, tCsP);
             __syncthreads();
 
             // 3. Read P back into rP using Operand A layout
@@ -246,7 +246,8 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
             auto tSrP_copy = smem_thr_copy_P_A.retile_D(rP);
 
             // --- OPTIMIZATION: Correctly Transpose V for Operand B ---
-            auto sV_trans = make_tensor(sV_cur.data(), make_layout(get<1>(sV_cur.layout()), get<0>(sV_cur.layout())));
+            // Create a view of sV with swapped modes (D, BC) instead of (BC, D)
+            auto sV_trans = make_tensor(make_smem_ptr(sV_ptr), SmemLayoutVTrans{});
                                         
             auto rV = thr_mma.partition_fragment_B(sV_trans);
             auto smem_tiled_copy_V = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
@@ -256,9 +257,9 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
 
             CUTE_UNROLL
             for (int k = 0; k < size<2>(rP); k++) {
-                copy(smem_tiled_copy_P_A, tSsP_A(_, _, k), tSrP_copy(_, _, k));
-                copy(smem_tiled_copy_V, tSsV(_, _, k), tSrV_copy(_, _, k));
-                gemm(tiled_mma, rP(_, _, k), rV(_, _, k), rO);
+                cute::copy(smem_tiled_copy_P_A, tSsP_A(_, _, k), tSrP_copy(_, _, k));
+                cute::copy(smem_tiled_copy_V, tSsV(_, _, k), tSrV_copy(_, _, k));
+                cute::gemm(tiled_mma, rP(_, _, k), rV(_, _, k), rO);
             }
         }
         __syncthreads();
