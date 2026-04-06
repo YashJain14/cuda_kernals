@@ -46,6 +46,8 @@ echo "Python:  $(python3 --version)"
 echo "PyTorch: $(python3 -c 'import torch; print(torch.__version__)' 2>/dev/null || echo 'not found')"
 echo ""
 
+pip install flash-attn
+
 # ── Build ─────────────────────────────────────────────────────────────────────
 echo "--- Build ---"
 make clean

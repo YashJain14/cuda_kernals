@@ -1,2 +1,0 @@
-ERROR: flash-attn not installed.
-  pip install flash-attn --no-build-isolation
