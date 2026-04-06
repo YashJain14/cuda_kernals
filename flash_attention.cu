@@ -2065,15 +2065,14 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
     // Partition the global tensor using the exact same TiledMMA layout
     // This ensures the thread's fragment elements map to the correct global coordinates
     auto tCgO = thr_mma.partition_C(gO);
-    auto tCrO = thr_mma.retile_D(rO_half);
 
     // Copy from registers to global memory. CuTe handles the coordinate math perfectly.
     // We add a predicate to prevent writing out-of-bounds rows at the end of the sequence.
     auto tCgO_c = thr_mma.partition_C(make_identity_tensor(Shape<Int<BR>, Int<D>>{}));
     CUTE_UNROLL
-    for (int i = 0; i < size(tCrO); i++) {
+    for (int i = 0; i < size(rO_half); i++) {
         if (get<0>(tCgO_c(i)) < N - q_start) {
-            tCgO(i) = tCrO(i);
+            tCgO(i) = rO_half(i);
         }
     }
 }
