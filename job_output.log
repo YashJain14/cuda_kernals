@@ -1,7 +1,7 @@
 ============================================================
-  Job:         13536474.pbs101
-  Node:        x1000c1s4b0n1
-  Started:     Mon Apr  6 20:05:18 +08 2026
+  Job:         13536614.pbs101
+  Node:        x1000c3s6b0n0
+  Started:     Mon Apr  6 20:19:00 +08 2026
   Working dir: /home/users/ntu/yash012/cuda_kernals
   Log dir:     logs
 ============================================================
@@ -30,46 +30,46 @@ Build OK
   Sequence Length N = 1024
   Total FLOPs: 8.590e+09
 ------------------------------------------------------------
-  Stage 0 (Naive 3-kernel) :   13.848 ms    0.62 TFLOPS
-  Stage 1 (Fused 1-thr/row):   23.023 ms    0.37 TFLOPS  maxErr=1.91e-06  meanRelErr=1.03e-03
-  Stage 2 (Tiled coop fp16):   16.810 ms    0.51 TFLOPS  maxErr=1.91e-06  meanRelErr=1.03e-03
-  Stage 3 (wmma TC fp16)   :    1.045 ms    8.22 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
-  Stage 4 (wmma 64x64)     :    0.926 ms    9.28 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
-  Stage 5 (FA-2 deferred l):    0.926 ms    9.28 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
-  Stage 6 (async dbl-buf):    0.877 ms    9.79 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
-  Stage 7 (Smem Padded)   :    0.320 ms   26.83 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
-  Stage 8 (PTX mma.sync)  :    0.313 ms   27.41 TFLOPS  maxErr=5.72e-06  meanRelErr=4.69e-03
-  Stage 9 (CuTe FA-2)    :    0.108 ms   79.36 TFLOPS  maxErr=3.12e-03  meanRelErr=1.00e+00
+  Stage 0 (Naive 3-kernel) :   14.106 ms    0.61 TFLOPS
+  Stage 1 (Fused 1-thr/row):   22.167 ms    0.39 TFLOPS  maxErr=1.91e-06  meanRelErr=1.03e-03
+  Stage 2 (Tiled coop fp16):   16.801 ms    0.51 TFLOPS  maxErr=1.91e-06  meanRelErr=1.03e-03
+  Stage 3 (wmma TC fp16)   :    1.044 ms    8.23 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+  Stage 4 (wmma 64x64)     :    0.925 ms    9.29 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+  Stage 5 (FA-2 deferred l):    0.925 ms    9.28 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+  Stage 6 (async dbl-buf):    0.877 ms    9.80 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+  Stage 7 (Smem Padded)   :    0.320 ms   26.86 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+  Stage 8 (PTX mma.sync)  :    0.313 ms   27.45 TFLOPS  maxErr=5.72e-06  meanRelErr=4.69e-03
+  Stage 9 (CuTe FA-2)    :    0.107 ms   80.20 TFLOPS  maxErr=3.12e-03  meanRelErr=1.00e+00
 
 ------------------------------------------------------------
   Sequence Length N = 2048
   Total FLOPs: 3.436e+10
 ------------------------------------------------------------
-  Stage 0 (Naive 3-kernel) :   40.984 ms    0.84 TFLOPS
-  Stage 1 (Fused 1-thr/row):   77.000 ms    0.45 TFLOPS  maxErr=1.91e-06  meanRelErr=1.08e-03
-  Stage 2 (Tiled coop fp16):   63.802 ms    0.54 TFLOPS  maxErr=1.91e-06  meanRelErr=1.08e-03
-  Stage 3 (wmma TC fp16)   :    3.933 ms    8.74 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
-  Stage 4 (wmma 64x64)     :    3.657 ms    9.39 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
-  Stage 5 (FA-2 deferred l):    3.655 ms    9.40 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
-  Stage 6 (async dbl-buf):    3.475 ms    9.89 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
-  Stage 7 (Smem Padded)   :    1.255 ms   27.39 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
-  Stage 8 (PTX mma.sync)  :    1.231 ms   27.91 TFLOPS  maxErr=4.05e-06  meanRelErr=4.77e-03
-  Stage 9 (CuTe FA-2)    :    0.333 ms  103.05 TFLOPS  maxErr=2.26e-03  meanRelErr=9.99e-01
+  Stage 0 (Naive 3-kernel) :   40.924 ms    0.84 TFLOPS
+  Stage 1 (Fused 1-thr/row):   77.106 ms    0.45 TFLOPS  maxErr=1.91e-06  meanRelErr=1.08e-03
+  Stage 2 (Tiled coop fp16):   63.789 ms    0.54 TFLOPS  maxErr=1.91e-06  meanRelErr=1.08e-03
+  Stage 3 (wmma TC fp16)   :    3.932 ms    8.74 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+  Stage 4 (wmma 64x64)     :    3.652 ms    9.41 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+  Stage 5 (FA-2 deferred l):    3.654 ms    9.40 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+  Stage 6 (async dbl-buf):    3.469 ms    9.90 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+  Stage 7 (Smem Padded)   :    1.254 ms   27.40 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+  Stage 8 (PTX mma.sync)  :    1.231 ms   27.92 TFLOPS  maxErr=4.05e-06  meanRelErr=4.77e-03
+  Stage 9 (CuTe FA-2)    :    0.328 ms  104.63 TFLOPS  maxErr=2.26e-03  meanRelErr=9.99e-01
 
 ------------------------------------------------------------
   Sequence Length N = 4096
   Total FLOPs: 1.374e+11
 ------------------------------------------------------------
-  Stage 0 (Naive 3-kernel) :  168.409 ms    0.82 TFLOPS
-  Stage 1 (Fused 1-thr/row):  273.826 ms    0.50 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
-  Stage 2 (Tiled coop fp16):  254.687 ms    0.54 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
-  Stage 3 (wmma TC fp16)   :   15.602 ms    8.81 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
-  Stage 4 (wmma 64x64)     :   13.810 ms    9.95 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
-  Stage 5 (FA-2 deferred l):   13.810 ms    9.95 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
-  Stage 6 (async dbl-buf):   13.190 ms   10.42 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
-  Stage 7 (Smem Padded)   :    4.678 ms   29.38 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
-  Stage 8 (PTX mma.sync)  :    4.581 ms   30.00 TFLOPS  maxErr=3.34e-06  meanRelErr=5.15e-03
-  Stage 9 (CuTe FA-2)    :    1.256 ms  109.44 TFLOPS  maxErr=1.55e-03  meanRelErr=9.99e-01
+  Stage 0 (Naive 3-kernel) :  168.252 ms    0.82 TFLOPS
+  Stage 1 (Fused 1-thr/row):  273.782 ms    0.50 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
+  Stage 2 (Tiled coop fp16):  254.639 ms    0.54 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
+  Stage 3 (wmma TC fp16)   :   15.590 ms    8.82 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+  Stage 4 (wmma 64x64)     :   13.798 ms    9.96 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+  Stage 5 (FA-2 deferred l):   13.802 ms    9.96 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+  Stage 6 (async dbl-buf):   13.184 ms   10.42 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+  Stage 7 (Smem Padded)   :    4.674 ms   29.41 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+  Stage 8 (PTX mma.sync)  :    4.577 ms   30.02 TFLOPS  maxErr=3.34e-06  meanRelErr=5.15e-03
+  Stage 9 (CuTe FA-2)    :    1.234 ms  111.40 TFLOPS  maxErr=1.55e-03  meanRelErr=9.99e-01
 
 ============================================================
   Done.
@@ -83,19 +83,19 @@ Build OK
 ============================================================
 
   N = 1024
-    GEMM-I  (Q@K^T) only :    0.078 ms   54.97 TFLOPS
-    GEMM-II (P@V)   only :    0.070 ms   61.41 TFLOPS
+    GEMM-I  (Q@K^T) only :    0.078 ms   55.41 TFLOPS
+    GEMM-II (P@V)   only :    0.069 ms   62.14 TFLOPS
     Both GEMMs (ceiling) :    0.151 ms   56.76 TFLOPS  <-- target
 
   N = 2048
-    GEMM-I  (Q@K^T) only :    0.264 ms   65.10 TFLOPS
-    GEMM-II (P@V)   only :    0.230 ms   74.70 TFLOPS
-    Both GEMMs (ceiling) :    0.501 ms   68.53 TFLOPS  <-- target
+    GEMM-I  (Q@K^T) only :    0.266 ms   64.65 TFLOPS
+    GEMM-II (P@V)   only :    0.230 ms   74.83 TFLOPS
+    Both GEMMs (ceiling) :    0.501 ms   68.63 TFLOPS  <-- target
 
   N = 4096
-    GEMM-I  (Q@K^T) only :    1.002 ms   68.59 TFLOPS
-    GEMM-II (P@V)   only :    0.940 ms   73.13 TFLOPS
-    Both GEMMs (ceiling) :    1.952 ms   70.41 TFLOPS  <-- target
+    GEMM-I  (Q@K^T) only :    1.002 ms   68.58 TFLOPS
+    GEMM-II (P@V)   only :    0.939 ms   73.21 TFLOPS
+    Both GEMMs (ceiling) :    1.957 ms   70.23 TFLOPS  <-- target
 
 ============================================================
   Your Stage 4 TFLOPS / cuBLAS ceiling = efficiency %
@@ -119,25 +119,25 @@ Build OK
   -------------------------------------------------------------
        N         ms    TFLOPS  A100 peak%
   -------------------------------------------------------------
-    1024      0.107     80.58       25.8%
-    2048      0.269    127.92       41.0%
-    4096      0.990    138.86       44.5%
+    1024      0.109     79.03       25.3%
+    2048      0.268    128.14       41.1%
+    4096      0.987    139.26       44.6%
 
   dtype=fp16  |  causal=True (autoregressive)
   -------------------------------------------------------------
        N         ms    TFLOPS  A100 peak%
   -------------------------------------------------------------
-    1024      0.106     40.54       13.0%
-    2048      0.192     89.36       28.6%
-    4096      0.583    117.87       37.8%
+    1024      0.105     40.72       13.1%
+    2048      0.191     89.84       28.8%
+    4096      0.582    118.14       37.9%
 
   dtype=bf16  |  causal=True
   -------------------------------------------------------------
        N         ms    TFLOPS  A100 peak%
   -------------------------------------------------------------
-    1024      0.102     41.94       13.4%
-    2048      0.190     90.37       29.0%
-    4096      0.580    118.41       38.0%
+    1024      0.104     41.20       13.2%
+    2048      0.191     90.10       28.9%
+    4096      0.582    117.99       37.8%
 
 =================================================================
   Use these TFLOPS as your Stage 9 comparison target.
@@ -150,51 +150,50 @@ nsys profile complete — see logs/profile_stages.nsys-rep
 --- Generating summary ---
 ============================================================
   SC4064 FlashAttention — Results Summary
-  Mon Apr  6 20:08:25 +08 2026
+  Mon Apr  6 20:21:52 +08 2026
   GPU: NVIDIA A100-SXM4-40GB
 ============================================================
 
 === CUDA Kernel Stages (N=4096) ===
-    Stage 0 (Naive 3-kernel) :  168.409 ms    0.82 TFLOPS
-    Stage 1 (Fused 1-thr/row):  273.826 ms    0.50 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
-    Stage 2 (Tiled coop fp16):  254.687 ms    0.54 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
-    Stage 3 (wmma TC fp16)   :   15.602 ms    8.81 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
-    Stage 4 (wmma 64x64)     :   13.810 ms    9.95 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
-    Stage 5 (FA-2 deferred l):   13.810 ms    9.95 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
-    Stage 6 (async dbl-buf):   13.190 ms   10.42 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
-    Stage 7 (Smem Padded)   :    4.678 ms   29.38 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
-    Stage 8 (PTX mma.sync)  :    4.581 ms   30.00 TFLOPS  maxErr=3.34e-06  meanRelErr=5.15e-03
-    Stage 9 (CuTe FA-2)    :    1.256 ms  109.44 TFLOPS  maxErr=1.55e-03  meanRelErr=9.99e-01
+    Stage 0 (Naive 3-kernel) :  168.252 ms    0.82 TFLOPS
+    Stage 1 (Fused 1-thr/row):  273.782 ms    0.50 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
+    Stage 2 (Tiled coop fp16):  254.639 ms    0.54 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
+    Stage 3 (wmma TC fp16)   :   15.590 ms    8.82 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 4 (wmma 64x64)     :   13.798 ms    9.96 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 5 (FA-2 deferred l):   13.802 ms    9.96 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 6 (async dbl-buf):   13.184 ms   10.42 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 7 (Smem Padded)   :    4.674 ms   29.41 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 8 (PTX mma.sync)  :    4.577 ms   30.02 TFLOPS  maxErr=3.34e-06  meanRelErr=5.15e-03
+    Stage 9 (CuTe FA-2)    :    1.234 ms  111.40 TFLOPS  maxErr=1.55e-03  meanRelErr=9.99e-01
 
 === cuBLAS Tensor Core Ceiling ===
-      Both GEMMs (ceiling) :    1.952 ms   70.41 TFLOPS  <-- target
+      Both GEMMs (ceiling) :    1.957 ms   70.23 TFLOPS  <-- target
 
 === Official FlashAttention-2 Reference (fp16) ===
-  N=4096  0.990 ms  138.86 TFLOPS
+  N=4096  0.987 ms  139.26 TFLOPS
 
 === Speedup Table (N=4096) ===
-  Stage 0 (Naive):              168.409 ms   0.82 TFLOPS
-  Stage 1 (Fused):              273.826 ms   0.50 TFLOPS
-  Stage 2 (Tiled):              254.687 ms   0.54 TFLOPS
-  Stage 3 (wmma 32x32):          15.602 ms   8.81 TFLOPS
-  Stage 4 (wmma 64x64):          13.810 ms   9.95 TFLOPS
-  Stage 5 (FA-2 deferred):       13.810 ms   9.95 TFLOPS
-  Stage 6 (async dbl-buf):       13.190 ms   10.42 TFLOPS
-  Stage 7 (Smem Padded):          4.678 ms   29.38 TFLOPS
-  Stage 8 (PTX mma.sync):         4.581 ms   30.00 TFLOPS
-  Stage 9 (CuTe FA-2):            1.256 ms   109.44 TFLOPS
-  Official Flash-Attn:            0.990 ms   138.86 TFLOPS
-  cuBLAS ceiling:                   — ms   70.41 TFLOPS
+  Stage 0 (Naive):              168.252 ms   0.82 TFLOPS
+  Stage 1 (Fused):              273.782 ms   0.50 TFLOPS
+  Stage 2 (Tiled):              254.639 ms   0.54 TFLOPS
+  Stage 3 (wmma 32x32):          15.590 ms   8.82 TFLOPS
+  Stage 4 (wmma 64x64):          13.798 ms   9.96 TFLOPS
+  Stage 5 (FA-2 deferred):       13.802 ms   9.96 TFLOPS
+  Stage 6 (async dbl-buf):       13.184 ms   10.42 TFLOPS
+  Stage 7 (Smem Padded):          4.674 ms   29.41 TFLOPS
+  Stage 8 (PTX mma.sync):         4.577 ms   30.02 TFLOPS
+  Stage 9 (CuTe FA-2):            1.234 ms   111.40 TFLOPS
+  Official Flash-Attn:            0.987 ms   139.26 TFLOPS
+  cuBLAS ceiling:                   — ms   70.23 TFLOPS
 
-  Stage 9 vs Naive:      134.1x faster
+  Stage 9 vs Naive:      136.3x faster
   Stage 8 vs Stage 7:    1.02x faster
-  Stage 9 vs Stage 8:    3.65x faster
-  Stage 9 vs PyTorch:    1.3x slower  (78.8% of FA-2)
-  Stage 9 TC efficiency: 155.4% of cuBLAS ceiling
+  Stage 9 vs Stage 8:    3.71x faster
+  Stage 9 vs PyTorch:    1.3x slower  (80.0% of FA-2)
+  Stage 9 TC efficiency: 158.6% of cuBLAS ceiling
 
 === Nsight Systems — GPU Kernel Summary ===
 
 ============================================================
 
-Job finished: Mon Apr  6 20:08:25 +08 2026
-mv: cannot stat 'job_output.log': No such file or directory
+Job finished: Mon Apr  6 20:21:52 +08 2026

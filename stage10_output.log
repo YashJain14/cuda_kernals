@@ -1,0 +1,24 @@
+--- Environment ---
+nvcc: NVIDIA (R) Cuda compiler driver
+NVIDIA A100-SXM4-40GB, 40960 MiB
+
+--- Building Stage 10 ---
+Build OK
+
+--- Running Stage 10 Benchmark ---
+============================================================
+  Stage 10 (CuTe Optimized) Benchmark
+  B=2  nh=16  d=64  B*nh=32
+============================================================
+
+N = 1024
+  Stage 10 (CuTe Fixed):    0.129 ms   66.52 TFLOPS  maxErr=4.67e-03  meanRelErr=4.73e+00
+
+N = 2048
+  Stage 10 (CuTe Fixed):    0.392 ms   87.63 TFLOPS  maxErr=3.42e-03  meanRelErr=4.76e+00
+
+N = 4096
+  Stage 10 (CuTe Fixed):    1.143 ms  120.26 TFLOPS  maxErr=2.62e-03  meanRelErr=4.77e+00
+
+
+Job finished: Mon Apr  6 22:22:48 +08 2026
