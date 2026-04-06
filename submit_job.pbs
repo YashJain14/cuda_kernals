@@ -101,8 +101,8 @@ echo "=== cuBLAS Tensor Core Ceiling ==="
 awk '/N = 4096/{p=1} p && /ceiling/{print "  "$0; exit}' "$LOG_DIR/bench_cublas.log"
 echo ""
 
-echo "=== PyTorch FlashAttention-2 Reference (fp16) ==="
-awk '/dtype = fp16/{p=1} p && /N= *4096/{print "  "$0; exit}' "$LOG_DIR/bench_pytorch.log"
+echo "=== Official FlashAttention-2 Reference (fp16) ==="
+awk '/dtype=fp16/ && /causal=False/{p=1} p && /4096/{print "  N=4096  "$2" ms  "$3" TFLOPS"; exit}' "$LOG_DIR/bench_pytorch.log"
 echo ""
 
 echo "=== Speedup Table (N=4096) ==="
@@ -129,8 +129,8 @@ T7=$(awk '/N = 4096/{p=1} p && /Stage 7/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); prin
 T8=$(awk '/N = 4096/{p=1} p && /Stage 8/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
 T9=$(awk '/N = 4096/{p=1} p && /Stage 9/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cuda.log")
 
-PT=$(awk '/dtype = fp16/{p=1} p && /N= *4096/{match($0,/[0-9]+\.[0-9]+ ms/); print substr($0,RSTART,RLENGTH-3); exit}' "$LOG_DIR/bench_pytorch.log")
-PT_T=$(awk '/dtype = fp16/{p=1} p && /N= *4096/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_pytorch.log")
+PT=$(awk '/dtype=fp16/ && /causal=False/{p=1} p && /4096/{print $2; exit}' "$LOG_DIR/bench_pytorch.log")
+PT_T=$(awk '/dtype=fp16/ && /causal=False/{p=1} p && /4096/{print $3; exit}' "$LOG_DIR/bench_pytorch.log")
 CB=$(awk '/N = 4096/{p=1} p && /ceiling/{match($0,/[0-9]+\.[0-9]+ TFLOPS/); print substr($0,RSTART,RLENGTH-7); exit}' "$LOG_DIR/bench_cublas.log")
 
 printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 0 (Naive):"          "${S0:----}"  "${T0:----}"
@@ -143,7 +143,7 @@ printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 6 (async dbl-buf):"  "${S6:----}"  
 printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 7 (Smem Padded):"    "${S7:----}"  "${T7:----}"
 printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 8 (PTX mma.sync):"  "${S8:----}"  "${T8:----}"
 printf "  %-28s %8s ms   %s TFLOPS\n" "Stage 9 (CuTe FA-2):"  "${S9:----}"  "${T9:----}"
-printf "  %-28s %8s ms   %s TFLOPS\n" "PyTorch SDPA fp16:"        "${PT:----}"  "${PT_T:----}"
+printf "  %-28s %8s ms   %s TFLOPS\n" "Official Flash-Attn:"     "${PT:----}"  "${PT_T:----}"
 printf "  %-28s %8s ms   %s TFLOPS\n" "cuBLAS ceiling:"           "—"           "${CB:----}"
 echo ""
 
