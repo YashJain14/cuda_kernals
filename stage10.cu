@@ -95,13 +95,7 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
     auto thr_mma = tiled_mma.get_thread_slice(tid);
 
     // Operand A for GEMM-I: Q
-    // The Atom is TN, meaning A is Transposed, B is Normal.
-    // It will compute C = A^T * B
-    // Since we pass in Q, it effectively computes Q^T * B
-    // We want S = Q * K^T. 
-    // To get this with a TN atom, we need (Q^T)^T * K^T = Q * K^T.
-    // CuTe's MMA_Atom takes care of transposing the first operand logically if the layout matches.
-    auto tSrQ = thr_mma.partition_fragment_A(sQ); 
+    auto tSrQ = thr_mma.partition_fragment_A(sQ);
 
     // Accumulator for O: (MMA, M, N)
     auto rO = partition_fragment_C(tiled_mma, Shape<Int<BR>, Int<D>>{});
@@ -172,26 +166,16 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
         clear(rS);
 
         {
-            // Operand B for GEMM-I: K (We need K^T)
-            // By logically transposing sK_cur, we create a view of Shape (D, BC).
-            // When passed to the TN atom, it computes Q * (K_transposed)^T ... wait.
-            // Actually, the TN atom takes A transposed and B non-transposed.
-            // If we pass A = Q (shape BR x D) and B = K_transposed (shape D x BC),
-            // The TN atom expects A to be D x BR, so passing BR x D is implicitly transposing it.
-            // For B, it expects D x BC, which is what we pass.
-            // The result is (BR x D) * (D x BC) = (BR x BC).
-            auto sK_trans = make_tensor(sK_cur.data(), make_layout(get<1>(sK_cur.layout()), get<0>(sK_cur.layout())));
-            
-            auto tSrK = thr_mma.partition_fragment_B(sK_trans);
+            auto tSrK = thr_mma.partition_fragment_B(sK_cur);
 
             auto smem_tiled_copy_Q = make_tiled_copy_A(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_Q   = smem_tiled_copy_Q.get_thread_slice(tid);
-            auto tSsQ = smem_thr_copy_Q.partition_S(sQ); // Using sQ directly
+            auto tSsQ = smem_thr_copy_Q.partition_S(sQ);
             auto tSrQ_copy = smem_thr_copy_Q.retile_D(tSrQ);
 
             auto smem_tiled_copy_K = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_K   = smem_tiled_copy_K.get_thread_slice(tid);
-            auto tSsK = smem_thr_copy_K.partition_S(sK_trans);
+            auto tSsK = smem_thr_copy_K.partition_S(sK_cur);
             auto tSrK_copy = smem_thr_copy_K.retile_D(tSrK);
 
             CUTE_UNROLL
@@ -274,16 +258,11 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
             auto tSsP_A = smem_thr_copy_P_A.partition_S(sP);
             auto tSrP_copy = smem_thr_copy_P_A.retile_D(rP);
 
-            // Operand B for GEMM-II: V (loaded as BC x D, but we need it as B operand)
-            // With TN atom, B must be non-transposed. So we pass it logically transposed 
-            // as (D, BC) so the math works out to P * V.
-            // make_layout(get<1>..., get<0>...) logically swaps dimensions 
-            auto sV_trans = make_tensor(make_smem_ptr(sV_ptr), make_layout(get<1>(sV_cur.layout()), get<0>(sV_cur.layout())));
-
-            auto rV = thr_mma.partition_fragment_B(sV_trans);
+            // Operand B for GEMM-II: V
+            auto rV = thr_mma.partition_fragment_B(sV_cur);
             auto smem_tiled_copy_V = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_V   = smem_tiled_copy_V.get_thread_slice(tid);
-            auto tSsV = smem_thr_copy_V.partition_S(sV_trans);
+            auto tSsV = smem_thr_copy_V.partition_S(sV_cur);
             auto tSrV_copy = smem_thr_copy_V.retile_D(rV);
 
             CUTE_UNROLL
