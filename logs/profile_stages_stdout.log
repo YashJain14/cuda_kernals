@@ -1,0 +1,59 @@
+============================================================
+  FlashAttention Benchmark — A100 40GB
+  B=2  nh=16  d=64  B*nh=32
+  Warmup=3  Iters=10
+============================================================
+
+------------------------------------------------------------
+  Sequence Length N = 1024
+  Total FLOPs: 8.590e+09
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   14.169 ms    0.61 TFLOPS
+  Stage 1 (Fused 1-thr/row):   22.336 ms    0.38 TFLOPS  maxErr=1.91e-06  meanRelErr=1.03e-03
+  Stage 2 (Tiled coop fp16):   16.826 ms    0.51 TFLOPS  maxErr=1.91e-06  meanRelErr=1.03e-03
+  Stage 3 (wmma TC fp16)   :    1.045 ms    8.22 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+  Stage 4 (wmma 64x64)     :    0.926 ms    9.27 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+  Stage 5 (FA-2 deferred l):    0.927 ms    9.27 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+  Stage 6 (async dbl-buf):    0.878 ms    9.78 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+  Stage 7 (Smem Padded)   :    0.321 ms   26.77 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+  Stage 8 (PTX mma.sync)  :    0.314 ms   27.35 TFLOPS  maxErr=5.72e-06  meanRelErr=4.69e-03
+  Stage 9 (CuTe FA-2)    :    0.108 ms   79.22 TFLOPS  maxErr=3.12e-03  meanRelErr=1.00e+00
+
+------------------------------------------------------------
+  Sequence Length N = 2048
+  Total FLOPs: 3.436e+10
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   41.038 ms    0.84 TFLOPS
+  Stage 1 (Fused 1-thr/row):   77.142 ms    0.45 TFLOPS  maxErr=1.91e-06  meanRelErr=1.08e-03
+  Stage 2 (Tiled coop fp16):   63.829 ms    0.54 TFLOPS  maxErr=1.91e-06  meanRelErr=1.08e-03
+  Stage 3 (wmma TC fp16)   :    3.933 ms    8.74 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+  Stage 4 (wmma 64x64)     :    3.656 ms    9.40 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+  Stage 5 (FA-2 deferred l):    3.657 ms    9.40 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+  Stage 6 (async dbl-buf):    3.475 ms    9.89 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+  Stage 7 (Smem Padded)   :    1.255 ms   27.37 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+  Stage 8 (PTX mma.sync)  :    1.233 ms   27.87 TFLOPS  maxErr=4.05e-06  meanRelErr=4.77e-03
+  Stage 9 (CuTe FA-2)    :    0.334 ms  103.00 TFLOPS  maxErr=2.26e-03  meanRelErr=9.99e-01
+
+------------------------------------------------------------
+  Sequence Length N = 4096
+  Total FLOPs: 1.374e+11
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :  168.328 ms    0.82 TFLOPS
+  Stage 1 (Fused 1-thr/row):  273.639 ms    0.50 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
+  Stage 2 (Tiled coop fp16):  254.603 ms    0.54 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
+  Stage 3 (wmma TC fp16)   :   15.597 ms    8.81 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+  Stage 4 (wmma 64x64)     :   13.809 ms    9.95 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+  Stage 5 (FA-2 deferred l):   13.808 ms    9.95 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+  Stage 6 (async dbl-buf):   13.184 ms   10.42 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+  Stage 7 (Smem Padded)   :    4.676 ms   29.39 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+  Stage 8 (PTX mma.sync)  :    4.583 ms   29.99 TFLOPS  maxErr=3.34e-06  meanRelErr=5.15e-03
+  Stage 9 (CuTe FA-2)    :    1.256 ms  109.42 TFLOPS  maxErr=1.55e-03  meanRelErr=9.99e-01
+
+============================================================
+  Done.
+============================================================
+Importer error status: The importer timed out.
+Unable to retrieve the importer version: skipping importation of the QDSTRM file.
+Generating '/var/tmp/pbs.13536474.pbs101/nsys-report-d1c3.qdstrm'
+Generated:
+    /home/users/ntu/yash012/cuda_kernals/logs/profile_stages.qdstrm

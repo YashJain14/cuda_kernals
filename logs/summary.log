@@ -1,0 +1,47 @@
+============================================================
+  SC4064 FlashAttention — Results Summary
+  Mon Apr  6 20:08:25 +08 2026
+  GPU: NVIDIA A100-SXM4-40GB
+============================================================
+
+=== CUDA Kernel Stages (N=4096) ===
+    Stage 0 (Naive 3-kernel) :  168.409 ms    0.82 TFLOPS
+    Stage 1 (Fused 1-thr/row):  273.826 ms    0.50 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
+    Stage 2 (Tiled coop fp16):  254.687 ms    0.54 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
+    Stage 3 (wmma TC fp16)   :   15.602 ms    8.81 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 4 (wmma 64x64)     :   13.810 ms    9.95 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 5 (FA-2 deferred l):   13.810 ms    9.95 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 6 (async dbl-buf):   13.190 ms   10.42 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 7 (Smem Padded)   :    4.678 ms   29.38 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 8 (PTX mma.sync)  :    4.581 ms   30.00 TFLOPS  maxErr=3.34e-06  meanRelErr=5.15e-03
+    Stage 9 (CuTe FA-2)    :    1.256 ms  109.44 TFLOPS  maxErr=1.55e-03  meanRelErr=9.99e-01
+
+=== cuBLAS Tensor Core Ceiling ===
+      Both GEMMs (ceiling) :    1.952 ms   70.41 TFLOPS  <-- target
+
+=== Official FlashAttention-2 Reference (fp16) ===
+  N=4096  0.990 ms  138.86 TFLOPS
+
+=== Speedup Table (N=4096) ===
+  Stage 0 (Naive):              168.409 ms   0.82 TFLOPS
+  Stage 1 (Fused):              273.826 ms   0.50 TFLOPS
+  Stage 2 (Tiled):              254.687 ms   0.54 TFLOPS
+  Stage 3 (wmma 32x32):          15.602 ms   8.81 TFLOPS
+  Stage 4 (wmma 64x64):          13.810 ms   9.95 TFLOPS
+  Stage 5 (FA-2 deferred):       13.810 ms   9.95 TFLOPS
+  Stage 6 (async dbl-buf):       13.190 ms   10.42 TFLOPS
+  Stage 7 (Smem Padded):          4.678 ms   29.38 TFLOPS
+  Stage 8 (PTX mma.sync):         4.581 ms   30.00 TFLOPS
+  Stage 9 (CuTe FA-2):            1.256 ms   109.44 TFLOPS
+  Official Flash-Attn:            0.990 ms   138.86 TFLOPS
+  cuBLAS ceiling:                   — ms   70.41 TFLOPS
+
+  Stage 9 vs Naive:      134.1x faster
+  Stage 8 vs Stage 7:    1.02x faster
+  Stage 9 vs Stage 8:    3.65x faster
+  Stage 9 vs PyTorch:    1.3x slower  (78.8% of FA-2)
+  Stage 9 TC efficiency: 155.4% of cuBLAS ceiling
+
+=== Nsight Systems — GPU Kernel Summary ===
+
+============================================================

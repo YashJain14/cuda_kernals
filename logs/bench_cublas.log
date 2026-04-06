@@ -1,0 +1,24 @@
+============================================================
+  cuBLAS fp16 Tensor Core Ceiling — A100 40GB
+  B=2  nh=16  d=64  B*nh=32
+  Both GEMMs back-to-back, no softmax — best possible.
+============================================================
+
+  N = 1024
+    GEMM-I  (Q@K^T) only :    0.078 ms   54.97 TFLOPS
+    GEMM-II (P@V)   only :    0.070 ms   61.41 TFLOPS
+    Both GEMMs (ceiling) :    0.151 ms   56.76 TFLOPS  <-- target
+
+  N = 2048
+    GEMM-I  (Q@K^T) only :    0.264 ms   65.10 TFLOPS
+    GEMM-II (P@V)   only :    0.230 ms   74.70 TFLOPS
+    Both GEMMs (ceiling) :    0.501 ms   68.53 TFLOPS  <-- target
+
+  N = 4096
+    GEMM-I  (Q@K^T) only :    1.002 ms   68.59 TFLOPS
+    GEMM-II (P@V)   only :    0.940 ms   73.13 TFLOPS
+    Both GEMMs (ceiling) :    1.952 ms   70.41 TFLOPS  <-- target
+
+============================================================
+  Your Stage 4 TFLOPS / cuBLAS ceiling = efficiency %
+============================================================

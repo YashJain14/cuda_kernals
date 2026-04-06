@@ -19,6 +19,7 @@ LOG_DIR="logs"
 mkdir -p "$LOG_DIR"
 # Clean old logs from previous runs (safely)
 rm -f "$LOG_DIR"/*.log "$LOG_DIR"/*.nsys-rep "$LOG_DIR"/*.sqlite "$LOG_DIR"/*.txt
+rm -f job_output.log
 
 echo "============================================================"
 echo "  Job:         $PBS_JOBID"
@@ -42,11 +43,13 @@ echo ""
 CONDA_DIR="$HOME/miniconda3"
 source "$CONDA_DIR/etc/profile.d/conda.sh"
 conda activate sc4064
+unset PYTHONPATH
+unset PYTHONHOME
+export PATH="$HOME/miniconda3/envs/sc4064/bin:$PATH"
+
 echo "Python:  $(python3 --version)"
 echo "PyTorch: $(python3 -c 'import torch; print(torch.__version__)' 2>/dev/null || echo 'not found')"
 echo ""
-
-pip install flash-attn
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 echo "--- Build ---"
@@ -184,5 +187,3 @@ echo "============================================================"
 
 echo ""
 echo "Job finished: $(date)"
-# Final cleanup: move the PBS output log into the logs folder
-mv job_output.log "$LOG_DIR/job_output.log"

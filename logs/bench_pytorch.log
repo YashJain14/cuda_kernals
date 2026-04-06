@@ -1,0 +1,41 @@
+/home/users/ntu/yash012/miniconda3/envs/sc4064/lib/python3.11/contextlib.py:105: FutureWarning: `torch.backends.cuda.sdp_kernel()` is deprecated. In the future, this context manager will be removed. Please see `torch.nn.attention.sdpa_kernel()` for the new context manager, with updated signature.
+  self.gen = func(*args, **kwds)
+=================================================================
+  FlashAttention-2  (Dao-AILab flash-attn, official kernel)
+  B=2  nh=16  d=64
+  GPU    : NVIDIA A100-SXM4-40GB
+  PyTorch: 2.5.1+cu121
+  flash-attn version: 2.7.4.post1
+=================================================================
+
+  Correctness check (flash_attn vs F.sdpa, fp16, N=512) ...
+  Max absolute diff: 0.000122  ✓ OK
+
+  dtype=fp16  |  causal=False (bidirectional)
+  -------------------------------------------------------------
+       N         ms    TFLOPS  A100 peak%
+  -------------------------------------------------------------
+    1024      0.107     80.58       25.8%
+    2048      0.269    127.92       41.0%
+    4096      0.990    138.86       44.5%
+
+  dtype=fp16  |  causal=True (autoregressive)
+  -------------------------------------------------------------
+       N         ms    TFLOPS  A100 peak%
+  -------------------------------------------------------------
+    1024      0.106     40.54       13.0%
+    2048      0.192     89.36       28.6%
+    4096      0.583    117.87       37.8%
+
+  dtype=bf16  |  causal=True
+  -------------------------------------------------------------
+       N         ms    TFLOPS  A100 peak%
+  -------------------------------------------------------------
+    1024      0.102     41.94       13.4%
+    2048      0.190     90.37       29.0%
+    4096      0.580    118.41       38.0%
+
+=================================================================
+  Use these TFLOPS as your Stage 9 comparison target.
+  Stage9_TFLOPS / FA2_TFLOPS = your kernel efficiency
+=================================================================
