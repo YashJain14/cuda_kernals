@@ -30,17 +30,16 @@ static constexpr int BLK   = NWARP * 32;
 } while(0)
 
 // ── Shared Memory Layouts ──
-// We use Swizzle<3,3,3> to eliminate bank conflicts.
+// Use Swizzle<3,3,3> for bank-conflict-free access to 64-wide half-precision rows (128 bytes).
 using SmemLayoutAtom = decltype(composition(Swizzle<3,3,3>{}, Layout<Shape<_8, _64>, Stride<_64, _1>>{}));
 using SmemLayoutQ  = decltype(tile_to_shape(SmemLayoutAtom{}, Shape<Int<BR>, Int<D>>{}));
 using SmemLayoutKV = decltype(tile_to_shape(SmemLayoutAtom{}, Shape<Int<BC>, Int<D>>{}));
 using SmemLayoutP  = decltype(tile_to_shape(SmemLayoutAtom{}, Shape<Int<BR>, Int<BC>>{}));
 
-// Transposed layout for V to be used as Operand B in GEMM-II
-using SmemLayoutVTrans = decltype(tile_to_shape(SmemLayoutAtom{},
-                                  Shape<Int<D>, Int<BC>>{},
-                                  Step<_2, _1>{}));
-
+// ── MMA Atom ──
+// SM80_16x8x16_F32F16F16F32_TN:
+// A is Transposed (KxM), B is Non-Transposed (KxN). 
+// Math: C = A^T * B  => (MxK) * (KxN)
 using MMA_Atom_t = MMA_Atom<SM80_16x8x16_F32F16F16F32_TN>;
 using TiledMMA_t = decltype(make_tiled_mma(MMA_Atom_t{}, Layout<Shape<_8, _1, _1>>{}));
 
@@ -73,12 +72,15 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
     extern __shared__ char smem_raw[];
     SharedStorage& smem = *reinterpret_cast<SharedStorage*>(smem_raw);
 
+    // ── Global Tensors ──
     auto gQ = make_tensor(make_gmem_ptr(gQ_ptr + offset + q_start * D), Shape<Int<BR>, Int<D>>{}, Stride<Int<D>, _1>{});
     auto sQ = make_tensor(make_smem_ptr(smem.sQ.data()), SmemLayoutQ{});
 
+    // ── Tiled Copy: GMEM -> SMEM ──
     auto gmem_tiled_copy = make_tiled_copy(GmemCopyAtom{}, Layout<Shape<_32, _8>, Stride<_8, _1>>{}, Layout<Shape<_1, _8>>{});
     auto gmem_thr_copy = gmem_tiled_copy.get_thread_slice(tid);
 
+    // Load Q to SMEM
     {
         auto tQgQ = gmem_thr_copy.partition_S(gQ);
         auto tQsQ = gmem_thr_copy.partition_D(sQ);
@@ -88,13 +90,19 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
     }
     __syncthreads();
 
+    // ── MMA Setup ──
     TiledMMA_t tiled_mma;
     auto thr_mma = tiled_mma.get_thread_slice(tid);
 
-    auto tSrQ = thr_mma.partition_fragment_A(sQ);
+    // Operand A for GEMM-I: Q (transposed because atom is TN)
+    auto sQ_trans = make_tensor(sQ.data(), make_layout(get<1>(sQ.layout()), get<0>(sQ.layout())));
+    auto tSrQ = thr_mma.partition_fragment_A(sQ_trans); // (MMA, K, M)
+
+    // Accumulator for O: (MMA, M, N)
     auto rO = partition_fragment_C(tiled_mma, Shape<Int<BR>, Int<D>>{});
     clear(rO);
 
+    // Online Softmax State
     constexpr int kMmaM = decltype(size<1>(rO))::value;
     constexpr int ROWS_PER_THR = kMmaM * 2;
     float r_max[ROWS_PER_THR];
@@ -106,6 +114,7 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
 
     int Tc = (N + BC - 1) / BC;
 
+    // Prefetch KV tile 0
     if (Tc > 0) {
         auto gK_tile = make_tensor(make_gmem_ptr(gK_ptr + offset), Shape<Int<BC>, Int<D>>{}, Stride<Int<D>, _1>{});
         auto gV_tile = make_tensor(make_gmem_ptr(gV_ptr + offset), Shape<Int<BC>, Int<D>>{}, Stride<Int<D>, _1>{});
@@ -122,7 +131,9 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
         cp_async_fence();
     }
 
+    // --- Main loop ---
     for (int j = 0; j < Tc; j++) {
+        // Prefetch tile j+1
         if (j + 1 < Tc) {
             int next_kv = (j + 1) * BC;
             half_t* sK_next_ptr = ((j + 1) & 1) ? smem.sK1.data() : smem.sK0.data();
@@ -151,19 +162,23 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
         auto sK_cur = make_tensor(make_smem_ptr(sK_ptr), SmemLayoutKV{});
         auto sV_cur = make_tensor(make_smem_ptr(sV_ptr), SmemLayoutKV{});
 
+        // ══ GEMM-I: S = Q @ K^T ══
         auto rS = partition_fragment_C(tiled_mma, Shape<Int<BR>, Int<BC>>{});
         clear(rS);
 
         {
+            // Operand B for GEMM-I: K (transposed because atom is TN)
+            auto sK_trans = make_tensor(sK_cur.data(), make_layout(get<1>(sK_cur.layout()), get<0>(sK_cur.layout())));
+            auto tSrK = thr_mma.partition_fragment_B(sK_trans);
+
             auto smem_tiled_copy_Q = make_tiled_copy_A(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_Q   = smem_tiled_copy_Q.get_thread_slice(tid);
-            auto tSsQ = smem_thr_copy_Q.partition_S(sQ);
+            auto tSsQ = smem_thr_copy_Q.partition_S(sQ_trans);
             auto tSrQ_copy = smem_thr_copy_Q.retile_D(tSrQ);
 
             auto smem_tiled_copy_K = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_K   = smem_tiled_copy_K.get_thread_slice(tid);
-            auto tSsK = smem_thr_copy_K.partition_S(sK_cur);
-            auto tSrK = thr_mma.partition_fragment_B(sK_cur);
+            auto tSsK = smem_thr_copy_K.partition_S(sK_trans);
             auto tSrK_copy = smem_thr_copy_K.retile_D(tSrK);
 
             CUTE_UNROLL
@@ -177,6 +192,7 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
         CUTE_UNROLL
         for (int i = 0; i < size(rS); i++) rS(i) *= scale;
 
+        // ══ Online Softmax ══
         CUTE_UNROLL
         for (int mi = 0; mi < size<1>(rS); mi++) {
             float lmax_r0 = -INFINITY, lmax_r8 = -INFINITY;
@@ -225,46 +241,45 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
             r_sum[ri1] += lsum_r8;
         }
 
+        // ══ GEMM-II: O += P @ V ══
         {
-            // --- FIX: Proper SMEM Roundtrip for P ---
-            // 1. Convert rS to half
             auto sP = make_tensor(make_smem_ptr(smem.sP.data()), SmemLayoutP{});
             auto rS_half = make_tensor_like<half_t>(rS);
             CUTE_UNROLL
             for (int i = 0; i < size(rS); i++) rS_half(i) = __float2half(rS(i));
             
-            // 2. Write rS_half to sP
+            // Store rS_half to SMEM sP
             auto tCsP = thr_mma.partition_C(sP);
-            cute::copy(rS_half, tCsP);
+            copy(rS_half, tCsP);
             __syncthreads();
 
-            // 3. Read P back into rP using Operand A layout
-            auto rP = thr_mma.partition_fragment_A(sP);
+            // Operand A for GEMM-II: P (transposed because atom is TN)
+            auto sP_trans = make_tensor(sP.data(), make_layout(get<1>(sP.layout()), get<0>(sP.layout())));
+            auto rP = thr_mma.partition_fragment_A(sP_trans);
+            
             auto smem_tiled_copy_P_A = make_tiled_copy_A(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_P_A   = smem_tiled_copy_P_A.get_thread_slice(tid);
-            auto tSsP_A = smem_thr_copy_P_A.partition_S(sP);
+            auto tSsP_A = smem_thr_copy_P_A.partition_S(sP_trans);
             auto tSrP_copy = smem_thr_copy_P_A.retile_D(rP);
 
-            // --- OPTIMIZATION: Correctly Transpose V for Operand B ---
-            // Create a view of sV with swapped modes (D, BC) instead of (BC, D)
-            auto sV_trans = make_tensor(make_smem_ptr(sV_ptr), SmemLayoutVTrans{});
-                                        
-            auto rV = thr_mma.partition_fragment_B(sV_trans);
+            // Operand B for GEMM-II: V (non-transposed because atom is TN)
+            auto rV = thr_mma.partition_fragment_B(sV_cur);
             auto smem_tiled_copy_V = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_V   = smem_tiled_copy_V.get_thread_slice(tid);
-            auto tSsV = smem_thr_copy_V.partition_S(sV_trans);
+            auto tSsV = smem_thr_copy_V.partition_S(sV_cur);
             auto tSrV_copy = smem_thr_copy_V.retile_D(rV);
 
             CUTE_UNROLL
             for (int k = 0; k < size<2>(rP); k++) {
-                cute::copy(smem_tiled_copy_P_A, tSsP_A(_, _, k), tSrP_copy(_, _, k));
-                cute::copy(smem_tiled_copy_V, tSsV(_, _, k), tSrV_copy(_, _, k));
-                cute::gemm(tiled_mma, rP(_, _, k), rV(_, _, k), rO);
+                copy(smem_tiled_copy_P_A, tSsP_A(_, _, k), tSrP_copy(_, _, k));
+                copy(smem_tiled_copy_V, tSsV(_, _, k), tSrV_copy(_, _, k));
+                gemm(tiled_mma, rP(_, _, k), rV(_, _, k), rO);
             }
         }
         __syncthreads();
-    }
+    } // end KV loop
 
+    // ══ Final Normalization ══
     CUTE_UNROLL
     for (int mi = 0; mi < size<1>(rO); mi++) {
         float inv_l_r0 = 1.0f / r_sum[mi * 2];
@@ -357,8 +372,11 @@ __global__ void naive_matmul_pv(const half* P, const half* V, half* O, int N, in
     if (row >= N || col >= d) return;
     float sum = 0.0f;
     for (int k = 0; k < N; k++) sum += __half2float(P[row * N + k]) * __half2float(V[k * d + col]);
-    O[row * d + col] = __float2half(sum);
+    O[row * d + col] = __half2half(sum);
 }
+
+// Fixed half-to-half copy for naivePV (reusing PTX is safer here)
+__device__ __forceinline__ half __half2half(float x) { return __float2half(x); }
 
 void launch_naive(const half* d_Q, const half* d_K, const half* d_V, half* d_O, half* d_S, half* d_P, int B_nh, int N, int d) {
     float scale = 1.0f / sqrtf((float)d);
