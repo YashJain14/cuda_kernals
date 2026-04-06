@@ -2050,27 +2050,30 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
         }
     }
 
-    // Write O to global memory
-    int lane_id = tid % 32;
-    int wr = tid / 32;
-    int mma_r0 = lane_id / 4;
-    int mma_r8 = mma_r0 + 8;
-    int mma_c0 = (lane_id % 4) * 2;
-    int mma_c1 = mma_c0 + 1;
-
+    // Convert fp32 accumulator to fp16
+    auto rO_half = make_tensor_like<half_t>(rO);
     CUTE_UNROLL
-    for (int mi = 0; mi < size<1>(rO); mi++) {
-        CUTE_UNROLL
-        for (int ni = 0; ni < size<2>(rO); ni++) {
-            int row0 = q_start + wr * 16 + mi * 128 + mma_r0;
-            int row8 = q_start + wr * 16 + mi * 128 + mma_r8;
-            int col0 = ni * 8 + mma_c0;
-            int col1 = ni * 8 + mma_c1;
+    for (int i = 0; i < size(rO); i++) {
+        rO_half(i) = __float2half(rO(i));
+    }
 
-            if (row0 < N && col0 < D) gO_ptr[offset + row0 * D + col0] = __float2half(rO(0, mi, ni));
-            if (row0 < N && col1 < D) gO_ptr[offset + row0 * D + col1] = __float2half(rO(1, mi, ni));
-            if (row8 < N && col0 < D) gO_ptr[offset + row8 * D + col0] = __float2half(rO(2, mi, ni));
-            if (row8 < N && col1 < D) gO_ptr[offset + row8 * D + col1] = __float2half(rO(3, mi, ni));
+    // Create a global tensor for O matching the current block's tile
+    auto gO = make_tensor(make_gmem_ptr(gO_ptr + offset + q_start * D),
+                          Shape<Int<BR>, Int<D>>{},
+                          Stride<Int<D>, _1>{});
+
+    // Partition the global tensor using the exact same TiledMMA layout
+    // This ensures the thread's fragment elements map to the correct global coordinates
+    auto tCgO = thr_mma.partition_C(gO);
+    auto tCrO = thr_mma.retile_D(rO_half);
+
+    // Copy from registers to global memory. CuTe handles the coordinate math perfectly.
+    // We add a predicate to prevent writing out-of-bounds rows at the end of the sequence.
+    auto tCgO_c = thr_mma.partition_C(make_identity_tensor(Shape<Int<BR>, Int<D>>{}));
+    CUTE_UNROLL
+    for (int i = 0; i < size(tCrO); i++) {
+        if (get<0>(tCgO_c(i)) < N - q_start) {
+            tCgO(i) = tCrO(i);
         }
     }
 }
