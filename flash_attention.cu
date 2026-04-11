@@ -2005,15 +2005,27 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
 
         // ══ GEMM-II: O += P @ V ══
         {
-            // Use SMEM to permute fragment layout correctly
+            // --- Transpose V from (BC,D) to (D,BC) in reused sK buffer ---
+            // sK[j%2] is free after GEMM-I; reuse it for the transposed V.
+            // partition_fragment_B maps tensor(mode0,mode1) as B(N=mode0,K=mode1).
+            // We need K=BC (matching P's K) and N=D, so V must be (D, BC).
+            half_t* sVt_ptr = (j & 1) ? smem.sK1.data() : smem.sK0.data();
+            auto sVt = make_tensor(make_smem_ptr(sVt_ptr),
+                                   Layout<Shape<Int<D>, Int<BC>>,
+                                          Stride<Int<BC>, _1>>{});
+            for (int idx = tid; idx < D * BC; idx += BLK) {
+                int d  = idx / BC;
+                int bc = idx % BC;
+                sVt(d, bc) = sV_cur(bc, d);
+            }
+
+            // --- Store P (rS→fp16) to sP via C-fragment copy (layout convert) ---
             auto sP = make_tensor(make_smem_ptr(smem.sP.data()), SmemLayoutP{});
-            
-            // 1. Store register-resident P to SMEM
-            // Need a half fragment for rS values to use copy()
+
             auto rS_half = thr_mma.partition_fragment_C(sP);
             CUTE_UNROLL
             for (int i = 0; i < size(rS); i++) rS_half(i) = __float2half(rS(i));
-            
+
             auto smem_tiled_copy_P = make_tiled_copy_C(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_P   = smem_tiled_copy_P.get_thread_slice(tid);
             auto tSrS_P = smem_thr_copy_P.retile_S(rS_half);
@@ -2021,17 +2033,23 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
             copy(smem_tiled_copy_P, tSrS_P, tSsP);
             __syncthreads();
 
-            // 2. Reload P as operand A for GEMM-II
+            // --- Reload P as A operand (SMEM→register), V^T as B operand ---
             auto rP = thr_mma.partition_fragment_A(sP);
+            auto smem_tiled_copy_A = make_tiled_copy_A(SmemCopyAtom{}, tiled_mma);
+            auto smem_thr_copy_A   = smem_tiled_copy_A.get_thread_slice(tid);
+            auto tAsP      = smem_thr_copy_A.partition_S(sP);
+            auto tArP_copy = smem_thr_copy_A.retile_D(rP);
+
             auto smem_tiled_copy_V = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_V   = smem_tiled_copy_V.get_thread_slice(tid);
-            auto tSsV = smem_thr_copy_V.partition_S(sV_cur);
-            auto rV   = thr_mma.partition_fragment_B(sV_cur);
+            auto tSsVt = smem_thr_copy_V.partition_S(sVt);
+            auto rV    = thr_mma.partition_fragment_B(sVt);
             auto tSrV_copy = smem_thr_copy_V.retile_D(rV);
 
             CUTE_UNROLL
             for (int k = 0; k < size<2>(rP); k++) {
-                copy(smem_tiled_copy_V, tSsV(_, _, k), tSrV_copy(_, _, k));
+                copy(smem_tiled_copy_A, tAsP(_, _, k), tArP_copy(_, _, k));
+                copy(smem_tiled_copy_V, tSsVt(_, _, k), tSrV_copy(_, _, k));
                 gemm(tiled_mma, rP(_, _, k), rV(_, _, k), rO);
             }
         }
