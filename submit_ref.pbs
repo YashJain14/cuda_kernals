@@ -1,0 +1,51 @@
+#!/bin/bash
+#PBS -N flash_reference
+#PBS -l select=1:ngpus=1
+#PBS -l walltime=00:10:00
+#PBS -q normal
+#PBS -j oe
+#PBS -o ref_output.log
+#PBS -P personal
+
+# ============================================================
+#  SC4064 FlashAttention — Official FlashAttention-2 Reference
+#  Compares against stage 12 numbers on the same A100.
+#  Config: B=2, nh=16, d=64, N in {1024,2048,4096}, fp16
+# ============================================================
+
+set -e
+cd "$PBS_O_WORKDIR"
+
+# ── Modules ───────────────────────────────────────────────────────────────────
+module purge
+module load cuda/12.2.2
+
+# ── Environment ──
+echo "--- Environment ---"
+nvcc --version | head -1
+nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
+python3 --version
+echo ""
+
+# ── Check flash-attn installation ─────────────────────────────────────────────
+echo "--- Checking flash-attn ---"
+if ! python3 -c "from flash_attn import flash_attn_func" 2>/dev/null; then
+    echo "flash-attn not found. Installing..."
+    pip install flash-attn --no-build-isolation -q
+fi
+python3 -c "import flash_attn; print('flash-attn version:', flash_attn.__version__)"
+echo ""
+
+# ── Run Reference Benchmark ───────────────────────────────────────────────────
+echo "--- Running FlashAttention-2 Reference ---"
+python3 reference.py
+
+echo ""
+
+# ── Summary comparison ────────────────────────────────────────────────────────
+echo "--- Stage 12 results (from last run) ---"
+echo "  N=1024:   0.080 ms  107.41 TFLOPS"
+echo "  N=2048:   0.249 ms  137.86 TFLOPS"
+echo "  N=4096:   0.733 ms  187.45 TFLOPS"
+echo ""
+echo "Job finished: $(date)"

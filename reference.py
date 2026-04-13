@@ -47,9 +47,11 @@ end_evt   = torch.cuda.Event(enable_timing=True)
 
 for N in Ns:
     # flash_attn_func expects (B, seqlen, nheads, headdim)
-    q = torch.randn(B, N, nh, d, device=DEVICE, dtype=DTYPE)
-    k = torch.randn(B, N, nh, d, device=DEVICE, dtype=DTYPE)
-    v = torch.randn(B, N, nh, d, device=DEVICE, dtype=DTYPE)
+    # Use uniform [-1, 1] to match the CUDA benchmark stages (srand(42), rand()/RAND_MAX)
+    torch.manual_seed(42)
+    q = torch.empty(B, N, nh, d, device=DEVICE, dtype=DTYPE).uniform_(-1.0, 1.0)
+    k = torch.empty(B, N, nh, d, device=DEVICE, dtype=DTYPE).uniform_(-1.0, 1.0)
+    v = torch.empty(B, N, nh, d, device=DEVICE, dtype=DTYPE).uniform_(-1.0, 1.0)
 
     sm_scale = 1.0 / math.sqrt(d)
 
