@@ -18,13 +18,10 @@ set -e
 cd "$PBS_O_WORKDIR"
 
 # ── Modules ───────────────────────────────────────────────────────────────────
+# Do NOT load cuda/12.2.2 here — pytorch/2.6.0-py3-cu11.8 requires cuda/11.8.
+# The reference script only needs the GPU runtime (no nvcc), so cu11.8 is fine.
 module purge
-module load cuda/12.2.2
-
-# ── Activate miniconda env with PyTorch + flash-attn ─────────────────────────
-CONDA_DIR="$HOME/miniconda3"
-source "$CONDA_DIR/etc/profile.d/conda.sh"
-conda activate flashenv
+module load pytorch/2.6.0-py3-cu11.8
 
 # ── Environment ──
 echo "--- Environment ---"
@@ -34,12 +31,12 @@ python3 --version
 python3 -c "import torch; print('PyTorch:', torch.__version__, '| CUDA:', torch.version.cuda)"
 echo ""
 
-# ── Check flash-attn ──────────────────────────────────────────────────────────
+# ── Check flash-attn (fallback to torch SDPA if not available) ────────────────
 echo "--- Checking flash-attn ---"
 if python3 -c "from flash_attn import flash_attn_func" 2>/dev/null; then
     python3 -c "import flash_attn; print('flash-attn version:', flash_attn.__version__)"
 else
-    echo "flash-attn not found — will use torch SDPA fallback (also FA-2 on A100)"
+    echo "flash-attn not available — using torch SDPA (dispatches to FA-2 on A100)"
 fi
 echo ""
 
