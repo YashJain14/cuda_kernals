@@ -13,13 +13,13 @@ namespace flash {
 
 template <int Row, int Col, int Tile = 0, int SwizzleSpace = 0>
 struct SMemStride {
-    FA_DEVICE_CONSTEXPR static int row() { return Row; }
-    FA_DEVICE_CONSTEXPR static int col() { return Col; }
-    FA_DEVICE_CONSTEXPR static int tile() { return Tile; }
-    FA_DEVICE_CONSTEXPR static int swizzle_space() { return SwizzleSpace; }
+    FA_HOST_DEVICE_CONSTEXPR static int row() { return Row; }
+    FA_HOST_DEVICE_CONSTEXPR static int col() { return Col; }
+    FA_HOST_DEVICE_CONSTEXPR static int tile() { return Tile; }
+    FA_HOST_DEVICE_CONSTEXPR static int swizzle_space() { return SwizzleSpace; }
 
-    FA_DEVICE_CONSTEXPR static int crd2idx(int row_, int col_, int tile_,
-                                           int swizzle_space_) {
+    FA_HOST_DEVICE_CONSTEXPR static int crd2idx(int row_, int col_, int tile_,
+                                                int swizzle_space_) {
         return row_ * row() + col_ * col() + tile_ * tile() +
                swizzle_space_ * swizzle_space();
     }
@@ -27,10 +27,10 @@ struct SMemStride {
 
 template <int Rows, int Cols, int Tiles = 1, int SwizzleSpaces = 1>
 struct GSMemShape {
-    FA_DEVICE_CONSTEXPR static int rows() { return Rows; }
-    FA_DEVICE_CONSTEXPR static int cols() { return Cols; }
-    FA_DEVICE_CONSTEXPR static int tiles() { return Tiles; }
-    FA_DEVICE_CONSTEXPR static int swizzle_spaces() { return SwizzleSpaces; }
+    FA_HOST_DEVICE_CONSTEXPR static int rows() { return Rows; }
+    FA_HOST_DEVICE_CONSTEXPR static int cols() { return Cols; }
+    FA_HOST_DEVICE_CONSTEXPR static int tiles() { return Tiles; }
+    FA_HOST_DEVICE_CONSTEXPR static int swizzle_spaces() { return SwizzleSpaces; }
 };
 
 template <int col, int tile, int swizzle_space, typename index_t = int64_t>
@@ -53,13 +53,13 @@ struct SwizzleStride {
     int s3;
 
     // This determines the iteration of the copy we're in.
-    constexpr int offset_s2rmem(int iter) const {
+    FA_HOST_DEVICE_CONSTEXPR int offset_s2rmem(int iter) const {
         int i1 = (iter >> 1) & 1;
         int i2 = iter & 1;
         return i1 * s1 + i2 * s2;
     }
 
-    constexpr int offset_r2smem(int iter) const {
+    FA_HOST_DEVICE_CONSTEXPR int offset_r2smem(int iter) const {
         int i1 = (iter >> 2) & 1;
         int i2 = (iter >> 1) & 1;
         int i3 = iter & 1;

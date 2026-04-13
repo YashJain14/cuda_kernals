@@ -78,18 +78,18 @@ struct GSMemLdstConfig {
 
     static constexpr int thrs_per_row = 8;
 
-    static constexpr int tid_to_thr_row(int tid) { return tid / thrs_per_row; }
+    FA_HOST_DEVICE_CONSTEXPR static int tid_to_thr_row(int tid) { return tid / thrs_per_row; }
 
-    static constexpr int tid_to_thr_col(int tid) {
+    FA_HOST_DEVICE_CONSTEXPR static int tid_to_thr_col(int tid) {
         return (tid % thrs_per_row) * COLS_PER_FRAGMENT;
     }
 
-    static constexpr index_t gmem_thr_offset(int tid) {
+    FA_HOST_DEVICE_CONSTEXPR static index_t gmem_thr_offset(int tid) {
         return GMemStride::crd2idx(tid_to_thr_row(tid), tid_to_thr_col(tid), 0,
                                    0);
     }
 
-    static constexpr int smem_thr_offset(int tid) {
+    FA_HOST_DEVICE_CONSTEXPR static int smem_thr_offset(int tid) {
         return Swizzle::apply(tid_to_thr_row(tid) * SmemStride::row() +
                               tid_to_thr_col(tid) * SmemStride::col());
     }
@@ -141,7 +141,7 @@ struct SRMemLdstConfig {
                    SmemShape::tiles() / OpSmemStride::tile(),
                    SmemShape::swizzle_spaces() / OpSmemStride::swizzle_space()>;
 
-    static constexpr int lane_to_thr_offset_s2rmem(int lane_id) {
+    FA_HOST_DEVICE_CONSTEXPR static int lane_to_thr_offset_s2rmem(int lane_id) {
         int thread_row, thread_col;
         if constexpr (!smem_row_major_ldmatrix) {
             thread_row = lane_id % 16;
@@ -154,7 +154,7 @@ struct SRMemLdstConfig {
                               thread_col * SmemStride::col());
     }
 
-    static constexpr int lane_to_thr_offset_r2smem(int lane_id) {
+    FA_HOST_DEVICE_CONSTEXPR static int lane_to_thr_offset_r2smem(int lane_id) {
         constexpr int thr_per_row = 4;
         constexpr int elems_per_thr = 2;
         int thread_row = lane_id / thr_per_row;
@@ -163,7 +163,7 @@ struct SRMemLdstConfig {
                               thread_col * SmemStride::col());
     }
 
-    static constexpr SwizzleStride
+    FA_HOST_DEVICE_CONSTEXPR static SwizzleStride
     lane_to_thr_swizzle_stride_s2rmem(int lane_id) {
         if constexpr (std::is_same_v<Swizzle, NoSwizzle>) {
             return SwizzleStride{32, 16};
@@ -180,7 +180,7 @@ struct SRMemLdstConfig {
         }
     }
 
-    static constexpr SwizzleStride
+    FA_HOST_DEVICE_CONSTEXPR static SwizzleStride
     lane_to_thr_swizzle_stride_r2smem(int lane_id) {
         if constexpr (std::is_same_v<Swizzle, NoSwizzle>) {
             return SwizzleStride{32, 16, 8};
