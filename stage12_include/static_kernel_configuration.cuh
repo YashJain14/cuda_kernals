@@ -34,7 +34,7 @@ constexpr bool valid_config() {
     return true;
 }
 
-template <FlashForwardKernelConfig CFG>
+template <const FlashForwardKernelConfig &CFG>
 struct ForwardKernelTileShapes {
     static_assert(valid_config<CFG>());
 
@@ -101,12 +101,12 @@ struct ForwardKernelTileShapes {
         get_rmem_tile_buffer_size(CFG.V_mma_load_K_fragments, PV_rmem_tiles);
 };
 
-template <FlashForwardKernelConfig _CFG>
+template <const FlashForwardKernelConfig &_CFG>
 struct StaticForwardKernelConfig {
     static constexpr FlashForwardKernelConfig CFG = _CFG;
 
     using accum_t = float;
-    using value_t = typename std::conditional_t<CFG.dtype == torch::kBFloat16,
+    using value_t = typename std::conditional_t<CFG.dtype == 2,
                                                 nv_bfloat16, half>;
     using N = ForwardKernelTileShapes<CFG>;
 

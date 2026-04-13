@@ -51,9 +51,9 @@ template <typename GSRConfig, typename value_t_, typename gsmem, typename srmem,
 struct GSRBlockTensor
     : public RmemBlockTensor<typename GSRConfig::rmem, value_t_, index_t> {
     using value_t = value_t_;
-    using GSMemShape = gsmem::TensorShape;
-    using SmemStride = gsmem::SmemStride;
-    using GMemStride = gsmem::GMemStride;
+    using GSMemShape = typename gsmem::TensorShape;
+    using SmemStride = typename gsmem::SmemStride;
+    using GMemStride = typename gsmem::GMemStride;
     using Base = RmemBlockTensor<typename GSRConfig::rmem, value_t, index_t>;
     using GM2SM_op = GM2SM_async<value_t>;
 

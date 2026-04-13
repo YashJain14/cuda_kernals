@@ -323,8 +323,8 @@ FA_DEVICE_CONSTEXPR void convert_to_16_bit_dtype(SrcType &src_view,
 
     auto src = src_view.with_op_tiling_removed();
     auto dst2 = dst_view.with_op_tiling_removed().as_type2();
-    using SrcShape = decltype(src)::Layout::Shape;
-    using DstShape = decltype(dst2)::Layout::Shape;
+    using SrcShape = typename decltype(src)::Layout::Shape;
+    using DstShape = typename decltype(dst2)::Layout::Shape;
 
     static_assert(SrcShape::tiles() == 1, "Src must have 1 tile");
     static_assert(SrcShape::cols() * SrcShape::tiles() ==

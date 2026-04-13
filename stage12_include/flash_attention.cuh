@@ -1,6 +1,6 @@
 #pragma once
 
-namespace torch { enum ScalarType { kFloat16, kBFloat16, kFloat32 }; }
+
 #include <algorithm>
 
 namespace flash {
@@ -15,15 +15,15 @@ struct ForwardKernelArgs {
 
     // We assume all strides are the same across all inputs, and that
     // the tensors are all row major.
-    const index_t batch_stride;
-    const index_t seq_stride;
-    const index_t head_stride;
+    index_t batch_stride;
+    index_t seq_stride;
+    index_t head_stride;
 
-    const index_t seq_len;
-    const index_t n_heads;
+    index_t seq_len;
+    index_t n_heads;
 
-    const int n_Q_blocks;
-    const int n_KV_blocks;
+    int n_Q_blocks;
+    int n_KV_blocks;
 };
 } // namespace flash
 
@@ -32,7 +32,7 @@ struct ForwardKernelArgs {
 // configs to kernels. The official repo uses static switches, which is cleaner
 // and faster.
 struct FlashForwardKernelConfig {
-    const torch::ScalarType dtype;
+    const int dtype;
     const int d_head;  // [64, 128]
     const int B_r;     // [64, 128]
     const int B_c;     // [32, 64, 128]

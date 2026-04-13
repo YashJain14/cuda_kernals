@@ -17,7 +17,7 @@ namespace torch { enum ScalarType { kFloat16, kBFloat16, kFloat32 }; }
 
 // Config for N=..., d=64. B_r=128, B_c=64, warps=4
 constexpr FlashForwardKernelConfig cfg_stage12 = {
-    torch::kFloat16, 64, 128, 64, 4,
+    1, 64, 128, 64, 4,
     true, true, true,
     0, 0, 0,
     true, true
@@ -134,7 +134,7 @@ int main() {
     printf("  Stage 12  —  PTX from Scratch Repo\n");
     printf("  B=%d  nh=%d  d=%d  B_nh=%d  BR=%d  BC=%d\n", B,nh,d,B_nh,BR,BC);
     printf("  smem/block = %zu KB  (2 blocks → %zu KB < 164 KB)\n",
-           sizeof(SharedStorage)/1024, 2*sizeof(SharedStorage)/1024);
+           cfg_stage12.smem_bytes()/1024, 2*cfg_stage12.smem_bytes()/1024);
     printf("  Optimizations: 2-block occupancy, ldmatrix smem→reg,\n");
     printf("                 Q hoisting, swizzled Vt, KV double-buffer\n");
     printf("============================================================\n\n");
