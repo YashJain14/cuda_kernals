@@ -20,7 +20,11 @@ cd "$PBS_O_WORKDIR"
 # ── Modules ───────────────────────────────────────────────────────────────────
 module purge
 module load cuda/12.2.2
-module load pytorch/2.6.0-py3-cu11.8
+
+# ── Activate miniconda env with PyTorch + flash-attn ─────────────────────────
+CONDA_DIR="$HOME/miniconda3"
+source "$CONDA_DIR/etc/profile.d/conda.sh"
+conda activate flashenv
 
 # ── Environment ──
 echo "--- Environment ---"
@@ -30,21 +34,12 @@ python3 --version
 python3 -c "import torch; print('PyTorch:', torch.__version__, '| CUDA:', torch.version.cuda)"
 echo ""
 
-# ── Try installing flash-attn via conda ───────────────────────────────────────
+# ── Check flash-attn ──────────────────────────────────────────────────────────
 echo "--- Checking flash-attn ---"
 if python3 -c "from flash_attn import flash_attn_func" 2>/dev/null; then
     python3 -c "import flash_attn; print('flash-attn version:', flash_attn.__version__)"
 else
-    echo "flash-attn not found — trying conda install..."
-    # Try miniforge/conda if available
-    CONDA_BIN=$(which conda 2>/dev/null || echo "")
-    if [ -n "$CONDA_BIN" ]; then
-        conda install -y -c conda-forge flash-attn 2>/dev/null || \
-        pip install flash-attn --no-build-isolation -q 2>/dev/null || \
-        echo "Could not install flash-attn — will use torch SDPA fallback (also FA-2 on A100)"
-    else
-        echo "No conda found — using torch SDPA fallback (also FA-2 on A100)"
-    fi
+    echo "flash-attn not found — will use torch SDPA fallback (also FA-2 on A100)"
 fi
 echo ""
 
