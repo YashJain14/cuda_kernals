@@ -35,6 +35,9 @@ using SmemLayoutAtom = decltype(composition(Swizzle<3,3,3>{}, Layout<Shape<_8, _
 using SmemLayoutQ  = decltype(tile_to_shape(SmemLayoutAtom{}, Shape<Int<BR>, Int<D>>{}));
 using SmemLayoutKV = decltype(tile_to_shape(SmemLayoutAtom{}, Shape<Int<BC>, Int<D>>{}));
 using SmemLayoutP  = decltype(tile_to_shape(SmemLayoutAtom{}, Shape<Int<BR>, Int<BC>>{}));
+// Swizzled layout for transposed V (D, BC) — eliminates 8-way bank conflicts
+// Without swizzle, stride along D = BC*2 = 128 bytes = bank period → all warps hit same bank
+using SmemLayoutVt = decltype(tile_to_shape(SmemLayoutAtom{}, Shape<Int<D>, Int<BC>>{}));
 
 // ── MMA Atom ──
 // SM80_16x8x16_F32F16F16F32_TN:
@@ -94,8 +97,18 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
     TiledMMA_t tiled_mma;
     auto thr_mma = tiled_mma.get_thread_slice(tid);
 
-    // Operand A for GEMM-I: Q
+    // Operand A for GEMM-I: Q — load ALL k-tiles once (Q is constant across KV loop)
     auto tSrQ = thr_mma.partition_fragment_A(sQ);
+    {
+        auto smem_tiled_copy_Q = make_tiled_copy_A(SmemCopyAtom{}, tiled_mma);
+        auto smem_thr_copy_Q   = smem_tiled_copy_Q.get_thread_slice(tid);
+        auto tSsQ = smem_thr_copy_Q.partition_S(sQ);
+        auto tSrQ_copy = smem_thr_copy_Q.retile_D(tSrQ);
+        CUTE_UNROLL
+        for (int k = 0; k < size<2>(tSrQ); k++) {
+            copy(smem_tiled_copy_Q, tSsQ(_, _, k), tSrQ_copy(_, _, k));
+        }
+    }
 
     // Accumulator for O: (MMA, M, N)
     auto rO = partition_fragment_C(tiled_mma, Shape<Int<BR>, Int<D>>{});
@@ -162,16 +175,12 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
         auto sV_cur = make_tensor(make_smem_ptr(sV_ptr), SmemLayoutKV{});
 
         // ══ GEMM-I: S = Q @ K^T ══
+        // Q is already in registers (hoisted before loop) — only load K per iteration
         auto rS = partition_fragment_C(tiled_mma, Shape<Int<BR>, Int<BC>>{});
         clear(rS);
 
         {
             auto tSrK = thr_mma.partition_fragment_B(sK_cur);
-
-            auto smem_tiled_copy_Q = make_tiled_copy_A(SmemCopyAtom{}, tiled_mma);
-            auto smem_thr_copy_Q   = smem_tiled_copy_Q.get_thread_slice(tid);
-            auto tSsQ = smem_thr_copy_Q.partition_S(sQ);
-            auto tSrQ_copy = smem_thr_copy_Q.retile_D(tSrQ);
 
             auto smem_tiled_copy_K = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_K   = smem_tiled_copy_K.get_thread_slice(tid);
@@ -180,7 +189,6 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
 
             CUTE_UNROLL
             for (int k = 0; k < size<2>(tSrQ); k++) {
-                copy(smem_tiled_copy_Q, tSsQ(_, _, k), tSrQ_copy(_, _, k));
                 copy(smem_tiled_copy_K, tSsK(_, _, k), tSrK_copy(_, _, k));
                 gemm(tiled_mma, tSrQ(_, _, k), tSrK(_, _, k), rS);
             }
@@ -240,35 +248,49 @@ flash_v10_cute_kernel(const half_t* __restrict__ gQ_ptr,
 
         // ══ GEMM-II: O += P @ V ══
         {
+            // --- Transpose V from (BC,D) to (D,BC) with swizzled layout ---
+            // Without swizzle, stride along D = BC*2 = 128 bytes = bank period,
+            // causing 8-way bank conflicts. SmemLayoutVt applies Swizzle<3,3,3>.
+            half_t* sVt_ptr = (j & 1) ? smem.sK1.data() : smem.sK0.data();
+            auto sVt = make_tensor(make_smem_ptr(sVt_ptr), SmemLayoutVt{});
+            // Scalar transpose — CuTe handles swizzle indexing automatically
+            for (int idx = tid; idx < D * BC; idx += BLK) {
+                int d  = idx / BC;
+                int bc = idx % BC;
+                sVt(d, bc) = sV_cur(bc, d);
+            }
+
+            // --- Store P (rS→fp16) to sP via C-fragment copy ---
             auto sP = make_tensor(make_smem_ptr(smem.sP.data()), SmemLayoutP{});
-            auto rS_half = make_tensor_like<half_t>(rS);
+
+            auto rS_half = thr_mma.partition_fragment_C(sP);
             CUTE_UNROLL
             for (int i = 0; i < size(rS); i++) rS_half(i) = __float2half(rS(i));
-            
-            // Store rS_half to SMEM sP
-            auto tCsP = thr_mma.partition_C(sP);
-            copy(rS_half, tCsP);
+
+            auto smem_tiled_copy_P = make_tiled_copy_C(SmemCopyAtom{}, tiled_mma);
+            auto smem_thr_copy_P   = smem_tiled_copy_P.get_thread_slice(tid);
+            auto tSrS_P = smem_thr_copy_P.retile_S(rS_half);
+            auto tSsP   = smem_thr_copy_P.partition_D(sP);
+            copy(smem_tiled_copy_P, tSrS_P, tSsP);
             __syncthreads();
 
-            // Operand A for GEMM-II: P (shape BR x BC)
+            // --- Reload P as A operand, V^T as B operand ---
             auto rP = thr_mma.partition_fragment_A(sP);
-            
-            auto smem_tiled_copy_P_A = make_tiled_copy_A(SmemCopyAtom{}, tiled_mma);
-            auto smem_thr_copy_P_A   = smem_tiled_copy_P_A.get_thread_slice(tid);
-            auto tSsP_A = smem_thr_copy_P_A.partition_S(sP);
-            auto tSrP_copy = smem_thr_copy_P_A.retile_D(rP);
+            auto smem_tiled_copy_A = make_tiled_copy_A(SmemCopyAtom{}, tiled_mma);
+            auto smem_thr_copy_A   = smem_tiled_copy_A.get_thread_slice(tid);
+            auto tAsP      = smem_thr_copy_A.partition_S(sP);
+            auto tArP_copy = smem_thr_copy_A.retile_D(rP);
 
-            // Operand B for GEMM-II: V
-            auto rV = thr_mma.partition_fragment_B(sV_cur);
             auto smem_tiled_copy_V = make_tiled_copy_B(SmemCopyAtom{}, tiled_mma);
             auto smem_thr_copy_V   = smem_tiled_copy_V.get_thread_slice(tid);
-            auto tSsV = smem_thr_copy_V.partition_S(sV_cur);
+            auto tSsVt = smem_thr_copy_V.partition_S(sVt);
+            auto rV    = thr_mma.partition_fragment_B(sVt);
             auto tSrV_copy = smem_thr_copy_V.retile_D(rV);
 
             CUTE_UNROLL
             for (int k = 0; k < size<2>(rP); k++) {
-                copy(smem_tiled_copy_P_A, tSsP_A(_, _, k), tSrP_copy(_, _, k));
-                copy(smem_tiled_copy_V, tSsV(_, _, k), tSrV_copy(_, _, k));
+                copy(smem_tiled_copy_A, tAsP(_, _, k), tArP_copy(_, _, k));
+                copy(smem_tiled_copy_V, tSsVt(_, _, k), tSrV_copy(_, _, k));
                 gemm(tiled_mma, rP(_, _, k), rV(_, _, k), rO);
             }
         }
@@ -398,6 +420,17 @@ float mean_rel_error(const float* ref, const half* test, int n) {
     return (float)(sum / n);
 }
 
+float cosine_similarity(const float* ref, const half* test, int n) {
+    double dot = 0.0, norm_r = 0.0, norm_t = 0.0;
+    for (int i = 0; i < n; i++) {
+        float r = ref[i], t = __half2float(test[i]);
+        dot    += (double)r * t;
+        norm_r += (double)r * r;
+        norm_t += (double)t * t;
+    }
+    return (float)(dot / (sqrt(norm_r) * sqrt(norm_t) + 1e-12));
+}
+
 float max_abs_error(const float* ref, const half* test, int n) {
     float mx = 0.0f;
     for (int i = 0; i < n; i++)
@@ -431,9 +464,9 @@ int main(int argc, char** argv) {
 
         srand(42);
         for (long i = 0; i < total_elems; i++) {
-            h_Q[i] = __float2half(((float)rand() / RAND_MAX - 0.5f) * 0.1f);
-            h_K[i] = __float2half(((float)rand() / RAND_MAX - 0.5f) * 0.1f);
-            h_V[i] = __float2half(((float)rand() / RAND_MAX - 0.5f) * 0.1f);
+            h_Q[i] = __float2half(((float)rand() / RAND_MAX - 0.5f) * 2.0f);
+            h_K[i] = __float2half(((float)rand() / RAND_MAX - 0.5f) * 2.0f);
+            h_V[i] = __float2half(((float)rand() / RAND_MAX - 0.5f) * 2.0f);
         }
 
         half *d_Q, *d_K, *d_V, *d_O, *d_S, *d_P;
@@ -474,9 +507,10 @@ int main(int argc, char** argv) {
         CUDA_CHECK(cudaMemcpy(h_O_test, d_O, qkv_half_bytes, cudaMemcpyDeviceToHost));
         float mae = max_abs_error(h_O_ref_f, h_O_test, total_elems);
         float mre = mean_rel_error(h_O_ref_f, h_O_test, total_elems);
+        float cossim = cosine_similarity(h_O_ref_f, h_O_test, total_elems);
 
         printf("N = %d\n", N);
-        printf("  Stage 10 (CuTe Fixed): %8.3f ms  %6.2f TFLOPS  maxErr=%.2e  meanRelErr=%.2e\n\n", ms, tflops, mae, mre);
+        printf("  Stage 10 (CuTe Fixed): %8.3f ms  %6.2f TFLOPS  maxErr=%.2e  meanRelErr=%.2e  cosSim=%.6f\n\n", ms, tflops, mae, mre, cossim);
 
         free(h_Q); free(h_K); free(h_V); free(h_O_ref_h); free(h_O_ref_f); free(h_O_test);
         cudaFree(d_Q); cudaFree(d_K); cudaFree(d_V); cudaFree(d_O); cudaFree(d_S); cudaFree(d_P);
