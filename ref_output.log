@@ -1,0 +1,7 @@
+--- Runtime Environment ---
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+  File "/home/users/ntu/yash012/miniconda3/envs/flashenv/lib/python3.11/site-packages/torch/__init__.py", line 290, in <module>
+    from torch._C import *  # noqa: F403
+    ^^^^^^^^^^^^^^^^^^^^^^
+ImportError: /home/users/ntu/yash012/miniconda3/envs/flashenv/lib/python3.11/site-packages/torch/lib/../../nvidia/cusparse/lib/libcusparse.so.12: undefined symbol: __nvJitLinkComplete_12_4, version libnvJitLink.so.12

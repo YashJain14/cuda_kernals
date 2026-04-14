@@ -5,7 +5,7 @@
 #PBS -q normal
 #PBS -j oe
 #PBS -o ref_output.log
-#PBS -P personal
+#PBS -P 52001004
 
 # ============================================================
 #  SC4064 FlashAttention — Official FlashAttention-2 Reference
@@ -17,39 +17,27 @@
 set -e
 cd "$PBS_O_WORKDIR"
 
-# ── Modules ───────────────────────────────────────────────────────────────────
-# Do NOT load cuda/12.2.2 here — pytorch/2.6.0-py3-cu11.8 requires cuda/11.8.
-# The reference script only needs the GPU runtime (no nvcc), so cu11.8 is fine.
+# ── 1. Load basic CUDA drivers only ──────────────────────────
+# We load this just to ensure the system paths see the A100 drivers, 
+# but we rely on your Conda env for the actual logic.
 module purge
-module load pytorch/2.6.0-py3-cu11.8
+module load cuda/12.2.1
 
-# ── Environment ──
-echo "--- Environment ---"
-nvcc --version | head -1
-nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
-python3 --version
-python3 -c "import torch; print('PyTorch:', torch.__version__, '| CUDA:', torch.version.cuda)"
+# ── 2. Activate your Specific Environment ─────────────────────
+CONDA_DIR="$HOME/miniconda3"
+source "$CONDA_DIR/etc/profile.d/conda.sh"
+conda activate flashenv
+
+# ── 3. Verification ──────────────────────────────────────────
+echo "--- Runtime Environment ---"
+python -c "import torch; import flash_attn; print(f'Torch: {torch.__version__} | Flash-Attn: {flash_attn.__version__}')"
+nvidia-smi --query-gpu=name,compute_cap --format=csv,noheader
+
+# ── 4. Run the Benchmark ─────────────────────────────────────
 echo ""
-
-# ── Check flash-attn (fallback to torch SDPA if not available) ────────────────
-echo "--- Checking flash-attn ---"
-if python3 -c "from flash_attn import flash_attn_func" 2>/dev/null; then
-    python3 -c "import flash_attn; print('flash-attn version:', flash_attn.__version__)"
-else
-    echo "flash-attn not available — using torch SDPA (dispatches to FA-2 on A100)"
-fi
-echo ""
-
-# ── Run Reference Benchmark ───────────────────────────────────────────────────
-echo "--- Running FlashAttention-2 Reference ---"
-python3 reference.py
+echo "--- Starting Reference Benchmark ---"
+# We call 'python' directly to ensure it uses the one in flashenv
+python reference.py
 
 echo ""
-
-# ── Summary comparison ────────────────────────────────────────────────────────
-echo "--- Stage 12 results (from last run) ---"
-echo "  N=1024:   0.080 ms  107.41 TFLOPS"
-echo "  N=2048:   0.249 ms  137.86 TFLOPS"
-echo "  N=4096:   0.733 ms  187.45 TFLOPS"
-echo ""
-echo "Job finished: $(date)"
+echo "Benchmark Completed: $(date)"
