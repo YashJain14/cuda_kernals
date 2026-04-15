@@ -1,4 +1,4 @@
-with open("stage12_include/flash_attention.cuh", "r") as f:
+with open("stage11_include/flash_attention.cuh", "r") as f:
     content = f.read()
 
 # Make args not const
@@ -10,5 +10,5 @@ content = content.replace("    const index_t n_heads;", "    index_t n_heads;")
 content = content.replace("    const int n_Q_blocks;", "    int n_Q_blocks;")
 content = content.replace("    const int n_KV_blocks;", "    int n_KV_blocks;")
 
-with open("stage12_include/flash_attention.cuh", "w") as f:
+with open("stage11_include/flash_attention.cuh", "w") as f:
     f.write(content)

@@ -1,5 +1,5 @@
 #!/bin/bash
-#PBS -N stage10_flashattn
+#PBS -N stage11_flashattn
 #PBS -l select=1:ngpus=1
 #PBS -l walltime=00:15:00
 #PBS -q normal
@@ -30,6 +30,7 @@ CUTLASS_PATH="$HOME/cuda_kernels/cutlass"
 
 echo "--- Building Stage 11 ---"
 nvcc -O3 -arch=sm_80 --use_fast_math -std=c++17 \
+     --expt-relaxed-constexpr \
      -I"$CUTLASS_PATH/include" \
      stage11.cu -o stage11_test -lcublas
 
@@ -42,4 +43,3 @@ echo "--- Running Stage 11 Benchmark ---"
 
 echo ""
 echo "Job finished: $(date)"
-
