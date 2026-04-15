@@ -15,11 +15,12 @@ namespace torch { enum ScalarType { kFloat16, kBFloat16, kFloat32 }; }
 
 // Config for d=128. B_r=128, B_c=64, warps=4
 // smem = (128 + 64*2) * 128 * 2 = 65536 bytes = 64 KB
-// d=128 doubles register pressure vs d=64 → limit to 1 block/SM
+// Uses load_2_2_2_tiles: best-performing config per repo autotuning
+// (load_0_0_0 is explicitly excluded from tuning — known to be slow)
 constexpr FlashForwardKernelConfig cfg_stage11_d128 = {
     1, 128, 128, 64, 4,
     true, true, true,
-    0, 0, 0,
+    2, 2, 2,
     true, true
 };
 
