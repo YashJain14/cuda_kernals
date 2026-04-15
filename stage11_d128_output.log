@@ -1,0 +1,27 @@
+--- Environment ---
+nvcc: NVIDIA (R) Cuda compiler driver
+NVIDIA A100-SXM4-40GB, 40960 MiB
+
+--- Building Stage 11 (d=128) ---
+Build OK
+
+--- Running Stage 11 (d=128) Benchmark ---
+============================================================
+  Stage 11 (d=128)  —  PTX from Scratch Repo
+  B=4  nh=16  d=128  B_nh=64  BR=128  BC=64
+  smem/block = 64 KB  (1 block/SM — register pressure at d=128)
+  Optimizations: ldmatrix smem→reg, Q hoisting,
+                 swizzled Vt, KV double-buffer
+============================================================
+
+N=1024  Tc=16
+  Stage 11 (d=128):   1.467 ms   23.42 TFLOPS  maxErr=6.10e-05  meanRelErr=2.59e-03  cosSim=1.000000
+
+N=2048  Tc=32
+  Stage 11 (d=128):   5.468 ms   25.13 TFLOPS  maxErr=3.05e-05  meanRelErr=2.52e-03  cosSim=1.000000
+
+N=4096  Tc=64
+  Stage 11 (d=128):  22.212 ms   24.75 TFLOPS  maxErr=3.05e-05  meanRelErr=2.40e-03  cosSim=1.000000
+
+
+Job finished: Wed Apr 15 20:00:32 +08 2026
