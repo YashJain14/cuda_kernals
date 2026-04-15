@@ -1,41 +1,14 @@
-/home/users/ntu/yash012/miniconda3/envs/sc4064/lib/python3.11/contextlib.py:105: FutureWarning: `torch.backends.cuda.sdp_kernel()` is deprecated. In the future, this context manager will be removed. Please see `torch.nn.attention.sdpa_kernel()` for the new context manager, with updated signature.
-  self.gen = func(*args, **kwds)
-=================================================================
-  FlashAttention-2  (Dao-AILab flash-attn, official kernel)
-  B=2  nh=16  d=64
-  GPU    : NVIDIA A100-SXM4-40GB
-  PyTorch: 2.5.1+cu121
-  flash-attn version: 2.7.4.post1
-=================================================================
+============================================================
+RUNNING: Official FlashAttention-2 (Dao-AILab)
+Config: B=2, nh=16, d=64, dtype=torch.float16
+Device: NVIDIA A100-SXM4-40GB
+============================================================
 
-  Correctness check (flash_attn vs F.sdpa, fp16, N=512) ...
-  Max absolute diff: 0.000122  ✓ OK
+N=1024  | Time: 0.109 ms | Throughput: 78.74 TFLOPS
+N=2048  | Time: 0.265 ms | Throughput: 129.85 TFLOPS
+N=4096  | Time: 0.983 ms | Throughput: 139.80 TFLOPS
 
-  dtype=fp16  |  causal=False (bidirectional)
-  -------------------------------------------------------------
-       N         ms    TFLOPS  A100 peak%
-  -------------------------------------------------------------
-    1024      0.109     79.03       25.3%
-    2048      0.268    128.14       41.1%
-    4096      0.987    139.26       44.6%
-
-  dtype=fp16  |  causal=True (autoregressive)
-  -------------------------------------------------------------
-       N         ms    TFLOPS  A100 peak%
-  -------------------------------------------------------------
-    1024      0.105     40.72       13.1%
-    2048      0.191     89.84       28.8%
-    4096      0.582    118.14       37.9%
-
-  dtype=bf16  |  causal=True
-  -------------------------------------------------------------
-       N         ms    TFLOPS  A100 peak%
-  -------------------------------------------------------------
-    1024      0.104     41.20       13.2%
-    2048      0.191     90.10       28.9%
-    4096      0.582    117.99       37.8%
-
-=================================================================
-  Use these TFLOPS as your Stage 9 comparison target.
-  Stage9_TFLOPS / FA2_TFLOPS = your kernel efficiency
-=================================================================
+============================================================
+Flash-Attn Version: <module 'torch.ops.flash_attn' from 'torch.ops'>
+Benchmark Completed Successfully.
+============================================================

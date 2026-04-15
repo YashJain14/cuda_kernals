@@ -1,10 +1,10 @@
 #!/bin/bash
-#PBS -N stage11_flashattn
+#PBS -N stage11_flashattn_bench
 #PBS -l select=1:ngpus=1
 #PBS -l walltime=00:15:00
 #PBS -q normal
 #PBS -j oe
-#PBS -o stage11_output.log
+#PBS -o stage11_bench_output.log
 #PBS -P personal
 
 # ============================================================
@@ -26,20 +26,20 @@ echo ""
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 # Using the same CUTLASS path logic as the main Makefile
-CUTLASS_PATH="$HOME/cuda_kernals/cutlass"
+CUTLASS_PATH="$HOME/cuda_kernels/cutlass"
 
 echo "--- Building Stage 11 ---"
 nvcc -O3 -arch=sm_80 --use_fast_math -std=c++17 \
      --expt-relaxed-constexpr \
      -I"$CUTLASS_PATH/include" \
-     stage11.cu -o stage11_test -lcublas
+     stage11_bench.cu -o stage11_test_bench -lcublas
 
 echo "Build OK"
 echo ""
 
 # ── Run Benchmark ─────────────────────────────────────────────────────────────
 echo "--- Running Stage 11 Benchmark ---"
-./stage11_test
+./stage11_test_bench
 
 echo ""
 echo "Job finished: $(date)"

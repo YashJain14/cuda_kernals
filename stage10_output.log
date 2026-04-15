@@ -1,4 +1,3 @@
-cat stage10_output.log 
 --- Environment ---
 nvcc: NVIDIA (R) Cuda compiler driver
 NVIDIA A100-SXM4-40GB, 40960 MiB
@@ -8,18 +7,21 @@ Build OK
 
 --- Running Stage 10 Benchmark ---
 ============================================================
-  Stage 10 (CuTe Optimized) Benchmark
-  B=2  nh=16  d=64  B*nh=32
+  Stage 10  —  ldmatrix + BC=64 + 2 blocks/SM
+  B=2  nh=16  d=64  B_nh=32  BR=128  BC=64
+  smem/block = 64 KB  (2 blocks → 128 KB < 164 KB)
+  Optimizations: 2-block occupancy, ldmatrix smem→reg,
+                 Q hoisting, swizzled Vt, KV double-buffer
 ============================================================
 
-N = 1024
-  Stage 10 (CuTe Fixed):    0.239 ms   36.00 TFLOPS  maxErr=6.10e-05  meanRelErr=2.40e-03  cosSim=1.000000
+N=1024  Tc=16
+  Stage 10:   0.217 ms   39.66 TFLOPS  maxErr=3.07e-03  meanRelErr=7.40e-03  cosSim=0.999993
 
-N = 2048
-  Stage 10 (CuTe Fixed):    0.749 ms   45.85 TFLOPS  maxErr=3.05e-05  meanRelErr=2.48e-03  cosSim=1.000000
+N=2048  Tc=32
+  Stage 10:   0.661 ms   51.96 TFLOPS  maxErr=6.71e-04  meanRelErr=3.02e-03  cosSim=1.000000
 
-N = 4096
-  Stage 10 (CuTe Fixed):    2.246 ms   61.20 TFLOPS  maxErr=3.05e-05  meanRelErr=2.32e-03  cosSim=1.000000
+N=4096  Tc=64
+  Stage 10:   2.474 ms   55.55 TFLOPS  maxErr=4.79e-04  meanRelErr=2.52e-03  cosSim=1.000000
 
 
-Job finished: Sun Apr 12 22:02:15 +08 2026
+Job finished: Wed Apr 15 19:35:10 +08 2026
