@@ -15,13 +15,13 @@ Build OK
 ============================================================
 
 N=1024  Tc=16
-  Stage 11 (d=128):   1.467 ms   23.42 TFLOPS  maxErr=6.10e-05  meanRelErr=2.59e-03  cosSim=1.000000
+  Stage 11 (d=128):   0.227 ms  151.08 TFLOPS  maxErr=6.10e-05  meanRelErr=2.59e-03  cosSim=1.000000
 
 N=2048  Tc=32
-  Stage 11 (d=128):   5.468 ms   25.13 TFLOPS  maxErr=3.05e-05  meanRelErr=2.52e-03  cosSim=1.000000
+  Stage 11 (d=128):   0.662 ms  207.74 TFLOPS  maxErr=3.05e-05  meanRelErr=2.52e-03  cosSim=1.000000
 
 N=4096  Tc=64
-  Stage 11 (d=128):  22.212 ms   24.75 TFLOPS  maxErr=3.05e-05  meanRelErr=2.40e-03  cosSim=1.000000
+  Stage 11 (d=128):   2.445 ms  224.89 TFLOPS  maxErr=3.05e-05  meanRelErr=2.40e-03  cosSim=1.000000
 
 
-Job finished: Wed Apr 15 20:00:32 +08 2026
+Job finished: Wed Apr 15 20:05:57 +08 2026
