@@ -171,19 +171,19 @@ int main() {
         CUDA_CHECK(cudaMemcpy(hOref,dO,qkv_bytes,cudaMemcpyDeviceToHost));
         for (long i=0;i<nel;i++) hOref_f[i]=__half2float(hOref[i]);
 
-        // Warmup
+        // Warmup (10 iters)
         CUDA_CHECK(cudaMemset(dO,0,qkv_bytes));
-        for (int r=0;r<3;r++) launch_flash_v11_d128(dQ,dK,dV,dO,B_nh,N);
+        for (int r=0;r<10;r++) launch_flash_v11_d128(dQ,dK,dV,dO,B_nh,N);
         CUDA_CHECK(cudaDeviceSynchronize());
 
-        // Timed runs
+        // Timed runs (100 iters)
         float ms=0.f;
         CUDA_CHECK(cudaMemset(dO,0,qkv_bytes));
         CUDA_CHECK(cudaEventRecord(t0));
-        for (int r=0;r<10;r++) launch_flash_v11_d128(dQ,dK,dV,dO,B_nh,N);
+        for (int r=0;r<100;r++) launch_flash_v11_d128(dQ,dK,dV,dO,B_nh,N);
         CUDA_CHECK(cudaEventRecord(t1));
         CUDA_CHECK(cudaEventSynchronize(t1));
-        CUDA_CHECK(cudaEventElapsedTime(&ms,t0,t1)); ms/=10;
+        CUDA_CHECK(cudaEventElapsedTime(&ms,t0,t1)); ms/=100;
 
         half* hOtest=(half*)malloc(qkv_bytes);
         CUDA_CHECK(cudaMemcpy(hOtest,dO,qkv_bytes,cudaMemcpyDeviceToHost));
