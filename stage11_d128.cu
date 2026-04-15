@@ -15,7 +15,7 @@ namespace torch { enum ScalarType { kFloat16, kBFloat16, kFloat32 }; }
 
 // Config for d=128. B_r=128, B_c=64, warps=4
 // smem = (128 + 64*2) * 128 * 2 = 65536 bytes = 64 KB
-// 2 blocks × 64 KB = 128 KB < 164 KB A100 limit → 2 blocks/SM
+// d=128 doubles register pressure vs d=64 → limit to 1 block/SM
 constexpr FlashForwardKernelConfig cfg_stage11_d128 = {
     1, 128, 128, 64, 4,
     true, true, true,
@@ -65,6 +65,10 @@ void launch_flash_v11_d128(const half* d_Q, const half* d_K, const half* d_V,
 
     CUDA_CHECK(cudaFuncSetAttribute(flash::flash_forward_kernel<Config11d128>,
                cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
+    // Limit to 1 block/SM: d=128 doubles register count vs d=64,
+    // preventing 2-block occupancy without spilling.
+    CUDA_CHECK(cudaFuncSetAttribute(flash::flash_forward_kernel<Config11d128>,
+               cudaFuncAttributePreferredSharedMemoryCarveout, 100));
 
     flash::flash_forward_kernel<Config11d128><<<grid, block, smem>>>(args);
 }
@@ -124,7 +128,7 @@ float max_abs_err(const float* ref, const half* tst, int n) {
 }
 
 int main() {
-    int B=2, nh=16, d=D, B_nh=B*nh;
+    int B=4, nh=16, d=D, B_nh=B*nh;
     int seq_lens[] = {1024, 2048, 4096};
     cudaEvent_t t0, t1;
     CUDA_CHECK(cudaEventCreate(&t0)); CUDA_CHECK(cudaEventCreate(&t1));
@@ -132,10 +136,10 @@ int main() {
     printf("============================================================\n");
     printf("  Stage 11 (d=128)  —  PTX from Scratch Repo\n");
     printf("  B=%d  nh=%d  d=%d  B_nh=%d  BR=%d  BC=%d\n", B,nh,d,B_nh,BR,BC);
-    printf("  smem/block = %zu KB  (2 blocks → %zu KB < 164 KB)\n",
-           cfg_stage11_d128.smem_bytes()/1024, 2*cfg_stage11_d128.smem_bytes()/1024);
-    printf("  Optimizations: 2-block occupancy, ldmatrix smem→reg,\n");
-    printf("                 Q hoisting, swizzled Vt, KV double-buffer\n");
+    printf("  smem/block = %zu KB  (1 block/SM — register pressure at d=128)\n",
+           cfg_stage11_d128.smem_bytes()/1024);
+    printf("  Optimizations: ldmatrix smem→reg, Q hoisting,\n");
+    printf("                 swizzled Vt, KV double-buffer\n");
     printf("============================================================\n\n");
 
     for (int ci = 0; ci < 3; ci++) {
