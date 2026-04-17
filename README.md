@@ -1,17 +1,17 @@
-# FlashAttention from Scratch — SC4064 GPU Programming
+# FlashAttention from Scratch — CUDA Optimization Journey
 
-This project implements the **FlashAttention-2 forward pass** from scratch in CUDA, progressing through 10 stages of optimization to reach over **60 TFLOPS** on an NVIDIA A100.
+This project implements the **FlashAttention-2 forward pass** from scratch in CUDA, progressing through **11 stages** of GPU optimization on an NVIDIA A100-SXM4-40GB. The final kernel reaches **146.53 TFLOPS** (d=64) and **216.00 TFLOPS** (d=128), exceeding the official FlashAttention-2 by ~4.7% and ~1.6% respectively.
 
 ## Quick Start
 
 ```bash
-# Build
+# Build stages 0–8
 make
 
 # Run all benchmarks
 make run
 
-# Run PyTorch reference (requires torch)
+# Run PyTorch (FA-2) reference (requires torch + flash-attn)
 make ref
 
 # Profile with Nsight Compute
@@ -20,48 +20,101 @@ bash profile.sh
 
 ## Optimization Stages
 
-| Stage | Kernel | Key Techniques | N=4096 TFLOPS |
-|-------|--------|----------------|---------------|
-| **0** | `naive_*` | Baseline: 3 separate kernels (QK^T, Softmax, PV) | ~0.8 |
-| **1** | `flash_fused_v1` | Fused online softmax, 1 thread/row, no HBM materialization | ~0.5 |
-| **2** | `flash_tiled_v2` | Shared memory tiling, 128 cooperative threads | ~0.5 |
-| **3** | `flash_wmma_v3` | **Tensor Cores (wmma API)**, 32x32 tiles | ~8.8 |
-| **4** | `flash_wmma_v4` | 64x64 tiles, 8 warps for better occupancy | ~10.0 |
-| **5** | `flash_wmma_v5` | **FlashAttention-2**: Deferred division logic | ~10.0 |
-| **6** | `flash_wmma_v6` | `cp.async` double-buffering for GMEM prefetching | ~10.5 |
-| **7** | `flash_wmma_v7` | **Smem Padding**: 72-element rows to fix bank conflicts | ~29.5 |
-| **8** | `flash_mma_v8` | **Direct PTX**: `mma.sync` + `ldmatrix` control | ~30.1 |
-| **9** | `flash_v9_cute` | **CuTe (CUTLASS 3.x)**: Swizzled smem, in-register softmax | ~61.5 |
+### d=64 benchmark (B=2, nh=16, d=64, B·nh=32)
+
+| Stage | Kernel | Key Technique | N=1024 | N=2048 | N=4096 |
+|-------|--------|---------------|--------|--------|--------|
+| **0** | `naive_*` | 3 separate kernels (QKᵀ, Softmax, PV) | 0.61 | 0.84 | 0.82 |
+| **1** | `flash_fused_v1` | Fused, online softmax, 1 thread/row | 0.39 | 0.45 | 0.50 |
+| **2** | `flash_tiled_v2` | Shared memory tiling, 128 cooperative threads | 0.51 | 0.54 | 0.54 |
+| **3** | `flash_wmma_v3` | **Tensor Cores (wmma API)**, 32×32 tiles | 8.25 | 8.75 | 8.84 |
+| **4** | `flash_wmma_v4` | 64×64 tiles, 8 warps for better occupancy | 9.29 | 9.42 | 9.97 |
+| **5** | `flash_wmma_v5` | **FA-2 deferred division** (l/m separation) | 9.29 | 9.41 | 9.97 |
+| **6** | `flash_wmma_v6` | `cp.async` double-buffering for GMEM prefetch | 9.80 | 9.91 | 10.44 |
+| **7** | `flash_wmma_v7` | **Smem padding** (72-elem rows, bank conflict fix) | 26.87 | 27.44 | 29.46 |
+| **8** | `flash_mma_v8` | **CuTe library**: swizzled smem, register-resident O | 32.73 | 40.94 | 42.13 |
+| **9** | `flash_v9_cute` | CuTe + BR=128 larger tile | 36.24 | 46.10 | 61.29 |
+| **10** | — | `ldmatrix` smem→reg, 2 blocks/SM | 39.76 | 51.97 | 70.09 |
+| **11** | — | **PTX hand-tuned**, `load_2_2_2` pipelining | 107.41 | 137.35 | **146.53** |
+
+All TFLOPS values are measured on **NVIDIA A100-SXM4-40GB** (CUDA 12.1, PyTorch 2.5.1).
+
+### d=128 benchmark (B=4, nh=16, d=128, B·nh=64)
+
+| Stage | N=1024 | N=2048 | N=4096 |
+|-------|--------|--------|--------|
+| **Stage 11** | 150.70 | 205.92 | **216.00** |
+| Official FA-2 | 149.20 | 166.61 | 212.52 |
+
+## Performance vs. References (N=4096)
+
+| Implementation | d=64 TFLOPS | d=128 TFLOPS |
+|---|---|---|
+| **Stage 11 (ours)** | **146.53** | **216.00** |
+| Official FlashAttention-2 | 139.98 | 212.52 |
+| Stage 10 (ldmatrix) | 70.09 | — |
+| cuBLAS ceiling (both GEMMs) | 70.63 | — |
+| Stage 8 (CuTe) | 42.13 | — |
+| Stage 0 (Naive) | 0.82 | — |
+
+**Overall speedup: 0.82 → 146.53 TFLOPS = 179× from naive to Stage 11.**
 
 ## Key Concepts Implemented
 
-1.  **Precision Alignment**: All stages use FP16 for HBM inputs/outputs and FP32 for internal accumulation (softmax stats and weighted sums), matching PyTorch's `scaled_dot_product_attention` precision.
-2.  **Memory Hierachy**: Progresses from global memory baselines to shared memory tiling and finally to register-resident accumulators in Stage 9.
-3.  **Tiling & Cooperative Groups**: Effective use of warp-level primitives (`__shfl_xor_sync`) and block-wide cooperation.
-4.  **Hardware Acceleration**: Direct utilization of Ampere Tensor Cores via PTX `mma.m16n8k16` instructions.
-5.  **Pipelining**: Overlapping memory transfers with compute using `cp.async` and double-buffering.
-6.  **Library Abstractions**: Using the **CuTe** library from CUTLASS 3.x to manage complex shared memory layouts and swizzling.
-
-## Performance Analysis (N=4096)
-
-- **Stage 0 (Naive)**: 0.82 TFLOPS
-- **Stage 9 (CuTe)**: 61.46 TFLOPS (**~75x speedup**)
-- **cuBLAS Ceiling**: ~70 TFLOPS (Materializing the $N \times N$ matrix in HBM)
-- **PyTorch (FA-2)**: ~135 TFLOPS (Reference target)
+1. **Kernel Fusion + Online Softmax** — Eliminates N×N HBM materialization; numerically stable running max/sum
+2. **Tensor Cores** — Switched from SIMT FP16 to `wmma::mma_sync` at Stage 3 for a 16× jump
+3. **Shared Memory Bank Conflict Elimination** — Padding smem rows to 72 elements at Stage 7 gave a 2.8× jump
+4. **FA-2 Deferred Division** — Separates the rescaling of O from each block iteration
+5. **`cp.async` Double-Buffering** — Overlaps GMEM loads with Tensor Core compute
+6. **CuTe (CUTLASS 3.x)** — Swizzled smem layouts and in-register output tile at Stage 8
+7. **`ldmatrix`** — Efficient warp-level smem→register loads at Stage 10
+8. **PTX-level Pipelining** — `load_2_2_2` loads fragments 2-at-a-time while MMA executes; swizzled Vᵀ layout at Stage 11
 
 ## Files
 
 | File | Description |
 |------|-------------|
-| `flash_attention.cu` | All 10 kernel stages + benchmark driver |
-| `cublas_ref.cu` | Measures cuBLAS FP16 Tensor Core ceiling |
-| `reference.py` | PyTorch FlashAttention-2 benchmark |
-| `profile.sh` | Nsight Compute profiling script |
-| `Makefile` | Build system (targets sm_80 / A100) |
+| `flash_attention.cu` | Stages 0–8: all kernels + benchmark driver (2236 lines) |
+| `stage9.cu` | Stage 9: CuTe + BR=128 |
+| `stage10.cu` | Stage 10: ldmatrix + 2 blocks/SM |
+| `stage11.cu` | Stage 11 (d=64): PTX hand-tuned entry point |
+| `stage11_d128.cu` | Stage 11 (d=128): extended PTX kernel |
+| `stage11_include/` | 18 `.cuh` headers: Tensor/Layout/Swizzle/PTX wrappers |
+| `cublas_ref.cu` | cuBLAS FP16 GEMM ceiling (no softmax) |
+| `reference.py` | PyTorch FlashAttention-2 reference (d=64) |
+| `reference_d128.py` | PyTorch FlashAttention-2 reference (d=128) |
+| `profile.sh` | Nsight Compute profiling wrapper |
+| `Makefile` | Build system targeting sm_80 (A100) |
+| `logs/` | Benchmark output logs from A100 runs |
+
+### Documentation
+
+| File | Description |
+|------|-------------|
+| [`STAGES.md`](STAGES.md) | Per-stage technical deep dive: algorithm, smem layout, why-fast |
+| [`BENCHMARK.md`](BENCHMARK.md) | Full results tables for d=64 and d=128 across all sequence lengths |
+| [`STAGE11.md`](STAGE11.md) | Stage 11 code walkthrough: config structs, tensor types, kernel flow |
 
 ## Configuration
 
-- **Batch size**: 2
-- **Heads**: 16
-- **Head dim**: 64
-- **Sequence lengths**: 1024, 2048, 4096
+| Parameter | d=64 config | d=128 config |
+|-----------|-------------|--------------|
+| Batch size | 2 | 4 |
+| Heads | 16 | 16 |
+| Head dim | 64 | 128 |
+| B·nh | 32 | 64 |
+| Sequence lengths | 1024, 2048, 4096 | 1024, 2048, 4096 |
+| Threads/block | 128 (4 warps) | 128 (4 warps) |
+| Shared memory | 32 KB (2 blocks/SM) | 64 KB (1 block/SM) |
+
+## Build
+
+```bash
+# Requires CUDA 12+, C++17, sm_80 (A100)
+nvcc -O3 -arch=sm_80 --use_fast_math -std=c++17 \
+     -I./cutlass/include flash_attention.cu -o flash_attn
+```
+
+External dependencies (git submodules):
+- `cutlass/` — CUTLASS 3.x (CuTe library, used in Stages 8–10)
+- `flash-attention/` — Dao-AILab reference implementation
