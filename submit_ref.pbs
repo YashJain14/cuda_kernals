@@ -38,6 +38,7 @@ echo ""
 echo "--- Starting Reference Benchmark ---"
 # We call 'python' directly to ensure it uses the one in flashenv
 python reference.py
+python referende_d128.py
 
 echo ""
 echo "Benchmark Completed: $(date)"
