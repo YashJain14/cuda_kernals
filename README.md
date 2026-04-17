@@ -18,6 +18,41 @@ make ref
 bash profile.sh
 ```
 
+## Running on a PBS Cluster (NTU HPC)
+
+Each PBS script submits a single GPU job (`select=1:ngpus=1`) to the `normal` queue targeting an A100. Logs are written to `logs/`.
+
+| Script | What it runs | Walltime | Output log |
+|--------|-------------|----------|------------|
+| `submit_job.pbs` | Full pipeline: build, Stages 0–8, cuBLAS ceiling, PyTorch ref, Nsight profile | 45 min | `logs/bench_cuda.log`, `logs/bench_cublas.log`, `logs/bench_pytorch.log`, `logs/summary.log` |
+| `submit_stage9.pbs` | Stage 9 benchmark only | 15 min | `logs/stage9_output.log` |
+| `submit_stage10.pbs` | Stage 10 benchmark only | 15 min | `logs/stage10_output.log` |
+| `submit_stage11.pbs` | Stage 11 d=64 benchmark | 15 min | `logs/stage11_output.log` |
+| `submit_stage11_d128.pbs` | Stage 11 d=128 benchmark | 15 min | `logs/stage11_d128_output.log` |
+| `submit_ref.pbs` | Official FlashAttention-2 PyTorch reference | 10 min | `logs/ref_output.log` |
+
+```bash
+# Submit the full benchmark (Stages 0–8 + cuBLAS + PyTorch ref + Nsight)
+qsub submit_job.pbs
+
+# Submit individual stage benchmarks
+qsub submit_stage9.pbs
+qsub submit_stage10.pbs
+qsub submit_stage11.pbs
+qsub submit_stage11_d128.pbs
+
+# Submit the official FA-2 reference (requires flashenv conda env)
+qsub submit_ref.pbs
+
+# Check job status
+qstat -u $USER
+
+# Tail output as it runs (job_output.log is the PBS stdout)
+tail -f logs/bench_cuda.log
+```
+
+> **Note:** `submit_job.pbs` uses the `sc4064` conda env. `submit_ref.pbs` requires a separate `flashenv` conda env with `flash-attn` installed. Update the `-P` project code in each script to match your allocation before submitting.
+
 ## Optimization Stages
 
 ### d=64 benchmark (B=2, nh=16, d=64, B·nh=32)
