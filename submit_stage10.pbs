@@ -5,7 +5,7 @@
 #PBS -q normal
 #PBS -j oe
 #PBS -o stage10_output.log
-#PBS -P 52001004
+#PBS -P personal
 
 # ============================================================
 #  SC4064 FlashAttention — Stage 10 Benchmark Job
@@ -42,3 +42,4 @@ echo "--- Running Stage 10 Benchmark ---"
 
 echo ""
 echo "Job finished: $(date)"
+

@@ -1,0 +1,27 @@
+--- Environment ---
+nvcc: NVIDIA (R) Cuda compiler driver
+NVIDIA A100-SXM4-40GB, 40960 MiB
+
+--- Building Stage 10 ---
+Build OK
+
+--- Running Stage 10 Benchmark ---
+============================================================
+  Stage 10  —  ldmatrix + BC=64 + 2 blocks/SM
+  B=2  nh=16  d=64  B_nh=32  BR=128  BC=64
+  smem/block = 64 KB  (2 blocks → 128 KB < 164 KB)
+  Optimizations: 2-block occupancy, ldmatrix smem→reg,
+                 Q hoisting, swizzled Vt, KV double-buffer
+============================================================
+
+N=1024  Tc=16
+  Stage 10:   0.216 ms   39.76 TFLOPS  maxErr=2.09e-03  meanRelErr=6.89e-03  cosSim=0.999995
+
+N=2048  Tc=32
+  Stage 10:   0.661 ms   51.97 TFLOPS  maxErr=1.86e-03  meanRelErr=3.19e-03  cosSim=0.999999
+
+N=4096  Tc=64
+  Stage 10:   1.961 ms   70.09 TFLOPS  maxErr=3.36e-04  meanRelErr=2.38e-03  cosSim=1.000000
+
+
+Job finished: Mon Apr 13 10:02:17 +08 2026

@@ -1,46 +1,41 @@
 ============================================================
   SC4064 FlashAttention — Results Summary
-  Mon Apr  6 20:21:52 +08 2026
+  Wed Apr 15 19:50:45 +08 2026
   GPU: NVIDIA A100-SXM4-40GB
 ============================================================
 
 === CUDA Kernel Stages (N=4096) ===
-    Stage 0 (Naive 3-kernel) :  168.252 ms    0.82 TFLOPS
-    Stage 1 (Fused 1-thr/row):  273.782 ms    0.50 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
-    Stage 2 (Tiled coop fp16):  254.639 ms    0.54 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
-    Stage 3 (wmma TC fp16)   :   15.590 ms    8.82 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
-    Stage 4 (wmma 64x64)     :   13.798 ms    9.96 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
-    Stage 5 (FA-2 deferred l):   13.802 ms    9.96 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
-    Stage 6 (async dbl-buf):   13.184 ms   10.42 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
-    Stage 7 (Smem Padded)   :    4.674 ms   29.41 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
-    Stage 8 (PTX mma.sync)  :    4.577 ms   30.02 TFLOPS  maxErr=3.34e-06  meanRelErr=5.15e-03
-    Stage 9 (CuTe FA-2)    :    1.234 ms  111.40 TFLOPS  maxErr=1.55e-03  meanRelErr=9.99e-01
+    Stage 0 (Naive 3-kernel) :  168.042 ms    0.82 TFLOPS
+    Stage 1 (Fused 1-thr/row):  273.065 ms    0.50 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
+    Stage 2 (Tiled coop fp16):  253.927 ms    0.54 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
+    Stage 3 (wmma TC fp16)   :   15.556 ms    8.84 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 4 (wmma 64x64)     :   13.785 ms    9.97 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 5 (FA-2 deferred l):   13.787 ms    9.97 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 6 (async dbl-buf):   13.159 ms   10.44 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 7 (Smem Padded)   :    4.665 ms   29.46 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 8 (CuTe FA-2)    :    3.262 ms   42.13 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
 
 === cuBLAS Tensor Core Ceiling ===
-      Both GEMMs (ceiling) :    1.957 ms   70.23 TFLOPS  <-- target
+      Both GEMMs (ceiling) :    1.946 ms   70.63 TFLOPS  <-- target
 
 === Official FlashAttention-2 Reference (fp16) ===
-  N=4096  0.987 ms  139.26 TFLOPS
 
 === Speedup Table (N=4096) ===
-  Stage 0 (Naive):              168.252 ms   0.82 TFLOPS
-  Stage 1 (Fused):              273.782 ms   0.50 TFLOPS
-  Stage 2 (Tiled):              254.639 ms   0.54 TFLOPS
-  Stage 3 (wmma 32x32):          15.590 ms   8.82 TFLOPS
-  Stage 4 (wmma 64x64):          13.798 ms   9.96 TFLOPS
-  Stage 5 (FA-2 deferred):       13.802 ms   9.96 TFLOPS
-  Stage 6 (async dbl-buf):       13.184 ms   10.42 TFLOPS
-  Stage 7 (Smem Padded):          4.674 ms   29.41 TFLOPS
-  Stage 8 (PTX mma.sync):         4.577 ms   30.02 TFLOPS
-  Stage 9 (CuTe FA-2):            1.234 ms   111.40 TFLOPS
-  Official Flash-Attn:            0.987 ms   139.26 TFLOPS
-  cuBLAS ceiling:                   — ms   70.23 TFLOPS
+  Stage 0 (Naive):              168.042 ms   0.82 TFLOPS
+  Stage 1 (Fused):              273.065 ms   0.50 TFLOPS
+  Stage 2 (Tiled):              253.927 ms   0.54 TFLOPS
+  Stage 3 (wmma 32x32):          15.556 ms   8.84 TFLOPS
+  Stage 4 (wmma 64x64):          13.785 ms   9.97 TFLOPS
+  Stage 5 (FA-2 deferred):       13.787 ms   9.97 TFLOPS
+  Stage 6 (async dbl-buf):       13.159 ms   10.44 TFLOPS
+  Stage 7 (Smem Padded):          4.665 ms   29.46 TFLOPS
+  Stage 8 (CuTe FA-2):            3.262 ms   42.13 TFLOPS
+  Official Flash-Attn:              --- ms   --- TFLOPS
+  cuBLAS ceiling:                   — ms   70.63 TFLOPS
 
-  Stage 9 vs Naive:      136.3x faster
-  Stage 8 vs Stage 7:    1.02x faster
-  Stage 9 vs Stage 8:    3.71x faster
-  Stage 9 vs PyTorch:    1.3x slower  (80.0% of FA-2)
-  Stage 9 TC efficiency: 158.6% of cuBLAS ceiling
+  Stage 8 vs Naive:      51.5x faster
+  Stage 8 vs Stage 7:    1.43x faster
+  Stage 8 TC efficiency: 59.6% of cuBLAS ceiling
 
 === Nsight Systems — GPU Kernel Summary ===
 

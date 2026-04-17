@@ -7,6 +7,11 @@
 //  Stage 1: Fused kernel with online softmax (1 thread/row)
 //  Stage 2: Tiled kernel with cooperative GEMMs (fp32)
 //  Stage 3: Tensor Core kernel using wmma (fp16 in, fp32 acc)
+//  Stage 4: wmma 64x64 tiles, 8 warps
+//  Stage 5: FA-2 deferred normalization
+//  Stage 6: cp.async double-buffering
+//  Stage 7: Shared memory padding (bank conflict reduction)
+//  Stage 8: CuTe FlashAttention-2 (swizzled smem, ldmatrix, reg-resident O)
 //
 //  Build:  nvcc -O3 -arch=sm_80 flash_attention.cu -o flash_attn
 //  Run:    ./flash_attn
@@ -1419,271 +1424,7 @@ void launch_flash_v7(const half* d_Q, const half* d_K, const half* d_V,
 }
 
 // ============================================================
-//  STAGE 8: PTX mma.sync + ldmatrix — Direct Tensor Core Control
-//
-//  Over Stage 7:
-//  - Uses mma.sync.aligned.m16n8k16 PTX instead of wmma API
-//  - ldmatrix.x4 loads 4 registers in one instruction from smem
-//  - Manual fragment register mapping for A (4 regs), B (2 regs)
-//
-//  Tile layout same as Stage 7: BR=64, BC=64, D=64, padded to 72.
-//  8 warps, each warp covers a 16×32 region of S (or O).
-// ============================================================
-
-__global__ void flash_mma_v8(const half* __restrict__ Q,
-                             const half* __restrict__ K,
-                             const half* __restrict__ V,
-                             half* __restrict__ O,
-                             int N, float scale) {
-    const int BR = S7_BR, BC = S7_BC, D = S7_D;
-    const int D_PAD = S7_D_PAD, BC_PAD = S7_BC_PAD;
-
-    int bh = blockIdx.y, q_tile = blockIdx.x;
-    int q_start = q_tile * BR;
-    if (q_start >= N) return;
-
-    int tid = threadIdx.x, warp_id = tid / 32, lane_id = tid % 32;
-    int offset = bh * N * D;
-    int wr = warp_id / 2;
-    int wc = warp_id % 2;
-
-    extern __shared__ char smem_raw[];
-    half*  sQ     = (half*)smem_raw;
-    half*  sK_db  = sQ    + BR * D_PAD;
-    half*  sV_db  = sK_db + 2 * BC * D_PAD;
-    half*  sP     = sV_db + 2 * BC * D_PAD;
-    float* sS     = (float*)(sP + BR * BC_PAD);
-    float* sO     = sS    + BR * BC_PAD;
-    float* row_m  = sO    + BR * D_PAD;
-    float* row_l  = row_m + BR;
-
-    for (int i = tid; i < BR * D_PAD; i += S45_BLK) sO[i] = 0.0f;
-    if (tid < BR) { row_m[tid] = -INFINITY; row_l[tid] = 0.0f; }
-    for (int i = tid; i < BR * D; i += S45_BLK) {
-        int r = i / D, c = i % D, gr = q_start + r;
-        sQ[r * D_PAD + c] = (gr < N) ? Q[offset + gr*D + c] : __float2half(0.0f);
-    }
-
-    int Tc = (N + BC - 1) / BC;
-    const int CHUNK = 8;
-    int chunks_per_tile = (BC * D) / CHUNK;
-
-    // Prefetch tile 0
-    {
-        half* sK0 = sK_db;
-        half* sV0 = sV_db;
-        for (int i = tid; i < chunks_per_tile; i += S45_BLK) {
-            int elem = i * CHUNK;
-            int r = elem / D, c = elem % D;
-            if (r < N) {
-                cp_async_16(&sK0[r*D_PAD + c], &K[offset + r*D + c]);
-                cp_async_16(&sV0[r*D_PAD + c], &V[offset + r*D + c]);
-            } else {
-                *reinterpret_cast<float4*>(&sK0[r*D_PAD + c]) = make_float4(0,0,0,0);
-                *reinterpret_cast<float4*>(&sV0[r*D_PAD + c]) = make_float4(0,0,0,0);
-            }
-        }
-        cp_async_commit();
-    }
-
-    // mma m16n8k16 output mapping per thread
-    int mma_r0 = lane_id / 4;        // row 0..7
-    int mma_r8 = mma_r0 + 8;         // row 8..15
-    int mma_c0 = (lane_id % 4) * 2;  // col 0,2,4,6
-    int mma_c1 = mma_c0 + 1;         // col 1,3,5,7
-    // ldmatrix row addressed by each lane
-    // int frag_row = lane_id % 16;
-
-    for (int j = 0; j < Tc; j++) {
-        int cur = j & 1, nxt = 1 - cur;
-        half* sK = sK_db + cur * BC * D_PAD;
-        half* sV = sV_db + cur * BC * D_PAD;
-        int kv_start = j * BC;
-
-        if (j + 1 < Tc) {
-            int next_kv = (j + 1) * BC;
-            half* sK_n = sK_db + nxt * BC * D_PAD;
-            half* sV_n = sV_db + nxt * BC * D_PAD;
-            for (int i = tid; i < chunks_per_tile; i += S45_BLK) {
-                int elem = i * CHUNK;
-                int r = elem / D, c = elem % D, gr = next_kv + r;
-                if (gr < N) {
-                    cp_async_16(&sK_n[r*D_PAD + c], &K[offset + gr*D + c]);
-                    cp_async_16(&sV_n[r*D_PAD + c], &V[offset + gr*D + c]);
-                } else {
-                    *reinterpret_cast<float4*>(&sK_n[r*D_PAD + c]) = make_float4(0,0,0,0);
-                    *reinterpret_cast<float4*>(&sV_n[r*D_PAD + c]) = make_float4(0,0,0,0);
-                }
-            }
-            cp_async_commit();
-            cp_async_wait_one_pending();
-        } else {
-            cp_async_wait_all();
-        }
-        __syncthreads();
-
-        // ══ GEMM-I: S = Q @ K^T via mma.m16n8k16 ══
-        {
-            float acc[4][4];
-            for (int t = 0; t < 4; t++)
-                acc[t][0] = acc[t][1] = acc[t][2] = acc[t][3] = 0.0f;
-
-            for (int kk = 0; kk < D / 16; kk++) {
-                // Load A (Q fragment): ldmatrix.x4 row-major 16x16
-                uint32_t a0, a1, a2, a3;
-                ldmatrix_x4(a0, a1, a2, a3,
-                    &sQ[(wr*16 + lane_id % 16) * D_PAD + kk*16 + (lane_id / 16) * 8]);
-
-                // 4 col-groups of 8 cols each -> 4 mma calls
-                for (int nc = 0; nc < 4; nc++) {
-                    int col_base = wc * 32 + nc * 8;
-                    // Load B (K^T fragment): ldmatrix.x2.trans col-major 16x8
-                    // K is [BC][D_PAD]. K^T is [D][BC]. Reduction is over D.
-                    // We need 16 elements of D and 8 of BC.
-                    uint32_t kb0, kb1;
-                    {
-                        uint32_t kaddr = static_cast<uint32_t>(
-                            __cvta_generic_to_shared(
-                                &sK[(col_base + lane_id % 8) * D_PAD + kk*16 + ((lane_id / 8) % 2) * 8]));
-                        asm volatile(
-                            "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {%0,%1}, [%2];\n"
-                            : "=r"(kb0), "=r"(kb1) : "r"(kaddr));
-                    }
-
-                    asm volatile(
-                        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
-                        "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%10,%11,%12,%13};\n"
-                        : "=f"(acc[nc][0]), "=f"(acc[nc][1]),
-                          "=f"(acc[nc][2]), "=f"(acc[nc][3])
-                        : "r"(a0), "r"(a1), "r"(a2), "r"(a3),
-                          "r"(kb0), "r"(kb1),
-                          "f"(acc[nc][0]), "f"(acc[nc][1]),
-                          "f"(acc[nc][2]), "f"(acc[nc][3]));
-                }
-            }
-
-            // Store S with scale
-            int base_row = wr * 16;
-            for (int nc = 0; nc < 4; nc++) {
-                int base_col = wc * 32 + nc * 8;
-                sS[(base_row + mma_r0)*BC_PAD + base_col + mma_c0] = acc[nc][0] * scale;
-                sS[(base_row + mma_r0)*BC_PAD + base_col + mma_c1] = acc[nc][1] * scale;
-                sS[(base_row + mma_r8)*BC_PAD + base_col + mma_c0] = acc[nc][2] * scale;
-                sS[(base_row + mma_r8)*BC_PAD + base_col + mma_c1] = acc[nc][3] * scale;
-            }
-        }
-        __syncthreads();
-
-        // ══ FA-2 Softmax (same as Stage 7) ══
-        {
-            int my_row = tid / 4, my_lane = tid % 4;
-            int c_start = my_lane * (BC/4), c_end = c_start + (BC/4);
-            float lmax = -INFINITY;
-            for (int c = c_start; c < c_end; c++)
-                if (kv_start + c < N) lmax = fmaxf(lmax, sS[my_row*BC_PAD + c]);
-            lmax = fmaxf(lmax, __shfl_xor_sync(0xffffffff, lmax, 1));
-            lmax = fmaxf(lmax, __shfl_xor_sync(0xffffffff, lmax, 2));
-            float m_old = row_m[my_row], m_new = fmaxf(m_old, lmax);
-            float corr = __expf(m_old - m_new);
-            if (my_lane == 0) { row_l[my_row] = corr * row_l[my_row]; row_m[my_row] = m_new; }
-            for (int c = my_lane; c < D; c += 4) sO[my_row*D_PAD + c] *= corr;
-            float lsum = 0.0f;
-            for (int c = c_start; c < c_end; c++) {
-                float p = (kv_start + c < N) ? __expf(sS[my_row*BC_PAD + c] - m_new) : 0.0f;
-                sP[my_row*BC_PAD + c] = __float2half(p);
-                lsum += p;
-            }
-            lsum += __shfl_xor_sync(0xffffffff, lsum, 1);
-            lsum += __shfl_xor_sync(0xffffffff, lsum, 2);
-            if (my_lane == 0) row_l[my_row] += lsum;
-        }
-        __syncthreads();
-
-        // ══ GEMM-II: O += P @ V via mma.m16n8k16 ══
-        {
-            int base_row = wr * 16;
-
-            // Load existing O accumulators
-            float acc[4][4];
-            for (int nc = 0; nc < 4; nc++) {
-                int base_col = wc * 32 + nc * 8;
-                acc[nc][0] = sO[(base_row + mma_r0)*D_PAD + base_col + mma_c0];
-                acc[nc][1] = sO[(base_row + mma_r0)*D_PAD + base_col + mma_c1];
-                acc[nc][2] = sO[(base_row + mma_r8)*D_PAD + base_col + mma_c0];
-                acc[nc][3] = sO[(base_row + mma_r8)*D_PAD + base_col + mma_c1];
-            }
-
-            for (int kk = 0; kk < BC / 16; kk++) {
-                // Load A (P fragment): ldmatrix.x4 row-major 16x16
-                uint32_t a0, a1, a2, a3;
-                ldmatrix_x4(a0, a1, a2, a3,
-                    &sP[(base_row + lane_id % 16) * BC_PAD + kk*16 + (lane_id / 16) * 8]);
-
-                for (int nc = 0; nc < 4; nc++) {
-                    int col_base = wc * 32 + nc * 8;
-                    // Load B (V fragment): ldmatrix.x2.trans
-                    // V is [BC][D_PAD] row-major, need col-major 16x8 slice
-                    uint32_t vb0, vb1;
-                    {
-                        // V stored row-major [k_row][D_PAD]. For B operand of m16n8k16,
-                        // we need col-major 16×8 view. V rows become columns.
-                        // We load 16 rows (BC-dim) and 8 columns (D-dim).
-                        // ldmatrix.x2.trans: lane_id%8 selects rows 0..7, 
-                        // (lane_id/8)%2 selects the next 8 rows (8..15).
-                        uint32_t vaddr = static_cast<uint32_t>(
-                            __cvta_generic_to_shared(
-                                &sV[(kk*16 + (lane_id % 8) + ((lane_id / 8) % 2) * 8) * D_PAD + col_base]));
-                        asm volatile(
-                            "ldmatrix.sync.aligned.m8n8.x2.trans.shared.b16 {%0,%1}, [%2];\n"
-                            : "=r"(vb0), "=r"(vb1) : "r"(vaddr));
-                    }
-
-                    asm volatile(
-                        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
-                        "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%10,%11,%12,%13};\n"
-                        : "=f"(acc[nc][0]), "=f"(acc[nc][1]),
-                          "=f"(acc[nc][2]), "=f"(acc[nc][3])
-                        : "r"(a0), "r"(a1), "r"(a2), "r"(a3),
-                          "r"(vb0), "r"(vb1),
-                          "f"(acc[nc][0]), "f"(acc[nc][1]),
-                          "f"(acc[nc][2]), "f"(acc[nc][3]));
-                }
-            }
-
-            // Store O back
-            for (int nc = 0; nc < 4; nc++) {
-                int base_col = wc * 32 + nc * 8;
-                sO[(base_row + mma_r0)*D_PAD + base_col + mma_c0] = acc[nc][0];
-                sO[(base_row + mma_r0)*D_PAD + base_col + mma_c1] = acc[nc][1];
-                sO[(base_row + mma_r8)*D_PAD + base_col + mma_c0] = acc[nc][2];
-                sO[(base_row + mma_r8)*D_PAD + base_col + mma_c1] = acc[nc][3];
-            }
-        }
-        __syncthreads();
-    }
-
-    for (int i = tid; i < BR * D; i += S45_BLK) {
-        int r = i / D, c = i % D, gr = q_start + r;
-        if (gr < N) O[offset + gr*D + c] = __float2half(sO[r*D_PAD + c] / row_l[r]);
-    }
-}
-
-void launch_flash_v8(const half* d_Q, const half* d_K, const half* d_V,
-                     half* d_O, int B_nh, int N) {
-    dim3 grid((N + S7_BR - 1) / S7_BR, B_nh);
-    dim3 block(S45_BLK);
-    size_t smem = (size_t)(S7_BR * S7_D_PAD + 2 * S7_BC * S7_D_PAD
-                         + 2 * S7_BC * S7_D_PAD + S7_BR * S7_BC_PAD) * sizeof(half)
-               + (size_t)(S7_BR * S7_BC_PAD + S7_BR * S7_D_PAD
-                         + S7_BR + S7_BR) * sizeof(float);
-    CUDA_CHECK(cudaFuncSetAttribute(flash_mma_v8,
-        cudaFuncAttributeMaxDynamicSharedMemorySize, 98304));
-    flash_mma_v8<<<grid, block, smem>>>(d_Q, d_K, d_V, d_O, N,
-        1.0f / sqrtf((float)HEAD_DIM));
-}
-
-// ============================================================
-//  STAGE 9: CuTe-based FlashAttention-2 Forward (sm_80)
+//  STAGE 8: CuTe-based FlashAttention-2 Forward (sm_80)
 //
 //  Optimizations demonstrated via library abstractions:
 //  1. CuTe TiledMMA with SM80_16x8x16 atom — correct fragment
@@ -1793,7 +1534,7 @@ void row_max_reduce(Fragment& frag_max, const Fragment& frag_src, int num_cols) 
 
 // ── The kernel ──
 __global__ void __launch_bounds__(BLK, 1)
-flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
+flash_v8_cute_kernel(const half_t* __restrict__ gQ_ptr,
                      const half_t* __restrict__ gK_ptr,
                      const half_t* __restrict__ gV_ptr,
                      half_t* __restrict__        gO_ptr,
@@ -2097,14 +1838,14 @@ flash_v9_cute_kernel(const half_t* __restrict__ gQ_ptr,
 
 // ── Launcher (extern "C" linkage for main file) ──
 extern "C"
-void launch_flash_v9(const half* d_Q, const half* d_K, const half* d_V,
+void launch_flash_v8(const half* d_Q, const half* d_K, const half* d_V,
                      half* d_O, int B_nh, int N) {
     dim3 grid((N + BR - 1) / BR, B_nh);
     dim3 block(BLK);
     size_t smem = sizeof(SharedStorage);
-    CUDA_CHECK(cudaFuncSetAttribute(flash_v9_cute_kernel,
+    CUDA_CHECK(cudaFuncSetAttribute(flash_v8_cute_kernel,
         cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
-    flash_v9_cute_kernel<<<grid, block, smem>>>(
+    flash_v8_cute_kernel<<<grid, block, smem>>>(
         reinterpret_cast<const half_t*>(d_Q),
         reinterpret_cast<const half_t*>(d_K),
         reinterpret_cast<const half_t*>(d_V),
@@ -2446,7 +2187,7 @@ int main(int argc, char** argv) {
         }
 
         // ==========================================================
-        //  STAGE 8: PTX mma.sync + ldmatrix
+        //  STAGE 8: CuTe FlashAttention-2
         // ==========================================================
         {
             float ms = 0.0f;
@@ -2468,34 +2209,7 @@ int main(int argc, char** argv) {
             CUDA_CHECK(cudaMemcpy(h_O_test, d_O, qkv_half_bytes, cudaMemcpyDeviceToHost));
             float mae = max_abs_error(h_O_ref_f, h_O_test, total_elems);
             float mre = mean_rel_error(h_O_ref_f, h_O_test, total_elems);
-            printf("  Stage 8 (PTX mma.sync)  : %8.3f ms  %6.2f TFLOPS  "
-                   "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
-        }
-
-        // ==========================================================
-        //  STAGE 9: Register-Resident O + In-Register Softmax
-        // ==========================================================
-        {
-            float ms = 0.0f;
-            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
-            for (int r = 0; r < warmup; r++)
-                launch_flash_v9(d_Q, d_K, d_V, d_O, B_nh, N);
-            CUDA_CHECK(cudaDeviceSynchronize());
-
-            CUDA_CHECK(cudaMemset(d_O, 0, qkv_half_bytes));
-            CUDA_CHECK(cudaEventRecord(start));
-            for (int r = 0; r < iters; r++)
-                launch_flash_v9(d_Q, d_K, d_V, d_O, B_nh, N);
-            CUDA_CHECK(cudaEventRecord(stop));
-            CUDA_CHECK(cudaEventSynchronize(stop));
-            CUDA_CHECK(cudaEventElapsedTime(&ms, start, stop));
-            ms /= iters;
-
-            double tflops = total_flops / (ms / 1000.0) / 1e12;
-            CUDA_CHECK(cudaMemcpy(h_O_test, d_O, qkv_half_bytes, cudaMemcpyDeviceToHost));
-            float mae = max_abs_error(h_O_ref_f, h_O_test, total_elems);
-            float mre = mean_rel_error(h_O_ref_f, h_O_test, total_elems);
-            printf("  Stage 9 (CuTe FA-2)    : %8.3f ms  %6.2f TFLOPS  "
+            printf("  Stage 8 (CuTe FA-2)    : %8.3f ms  %6.2f TFLOPS  "
                    "maxErr=%.2e  meanRelErr=%.2e\n", ms, tflops, mae, mre);
         }
 

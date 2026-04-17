@@ -1,14 +1,14 @@
 #!/bin/bash
-#PBS -N stage12_flashattn
+#PBS -N stage9_flashattn
 #PBS -l select=1:ngpus=1
 #PBS -l walltime=00:15:00
 #PBS -q normal
 #PBS -j oe
-#PBS -o stage12_output.log
-#PBS -P personal
+#PBS -o stage9_output.log
+#PBS -P 52001004
 
 # ============================================================
-#  SC4064 FlashAttention — Stage 12 Benchmark Job
+#  SC4064 FlashAttention — Stage 9 Benchmark Job
 # ============================================================
 
 set -e
@@ -26,20 +26,19 @@ echo ""
 
 # ── Build ─────────────────────────────────────────────────────────────────────
 # Using the same CUTLASS path logic as the main Makefile
-CUTLASS_PATH="$HOME/cuda_kernels/cutlass"
+CUTLASS_PATH="$HOME/cuda_kernals/cutlass"
 
-echo "--- Building Stage 12 ---"
+echo "--- Building Stage 9 ---"
 nvcc -O3 -arch=sm_80 --use_fast_math -std=c++17 \
-     --expt-relaxed-constexpr \
      -I"$CUTLASS_PATH/include" \
-     stage12.cu -o stage12_test -lcublas
+     stage9.cu -o stage9_test -lcublas
 
 echo "Build OK"
 echo ""
 
 # ── Run Benchmark ─────────────────────────────────────────────────────────────
-echo "--- Running Stage 12 Benchmark ---"
-./stage12_test
+echo "--- Running Stage 9 Benchmark ---"
+./stage9_test
 
 echo ""
 echo "Job finished: $(date)"

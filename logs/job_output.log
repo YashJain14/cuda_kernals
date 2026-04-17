@@ -1,0 +1,164 @@
+============================================================
+  Job:         13744336.pbs101
+  Node:        x1000c3s2b0n0
+  Started:     Wed Apr 15 19:48:17 +08 2026
+  Working dir: /home/users/ntu/yash012/cuda_kernals
+  Log dir:     logs
+============================================================
+
+--- Environment ---
+nvcc: NVIDIA (R) Cuda compiler driver
+NVIDIA A100-SXM4-40GB, 40960 MiB
+
+Python:  Python 3.11.15
+PyTorch: 2.5.1+cu121
+
+--- Build ---
+rm -f flash_attn cublas_ref
+nvcc -O3 -arch=sm_80 --use_fast_math -std=c++17 -I/home/users/ntu/yash012/cuda_kernals/cutlass/include -Xcompiler -Wall flash_attention.cu -o flash_attn
+nvcc -O3 -arch=sm_80 --use_fast_math -std=c++17 -I/home/users/ntu/yash012/cuda_kernals/cutlass/include -Xcompiler -Wall cublas_ref.cu -lcublas -o cublas_ref
+Build OK
+
+--- CUDA benchmark: Stages 0-8 ---
+============================================================
+  FlashAttention Benchmark — A100 40GB
+  B=2  nh=16  d=64  B*nh=32
+  Warmup=3  Iters=10
+============================================================
+
+------------------------------------------------------------
+  Sequence Length N = 1024
+  Total FLOPs: 8.590e+09
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   14.091 ms    0.61 TFLOPS
+  Stage 1 (Fused 1-thr/row):   22.027 ms    0.39 TFLOPS  maxErr=1.91e-06  meanRelErr=1.03e-03
+  Stage 2 (Tiled coop fp16):   16.791 ms    0.51 TFLOPS  maxErr=1.91e-06  meanRelErr=1.03e-03
+  Stage 3 (wmma TC fp16)   :    1.042 ms    8.25 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+  Stage 4 (wmma 64x64)     :    0.924 ms    9.29 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+  Stage 5 (FA-2 deferred l):    0.924 ms    9.29 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+  Stage 6 (async dbl-buf):    0.876 ms    9.80 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+  Stage 7 (Smem Padded)   :    0.320 ms   26.87 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+  Stage 8 (CuTe FA-2)    :    0.262 ms   32.73 TFLOPS  maxErr=1.91e-06  meanRelErr=1.02e-03
+
+------------------------------------------------------------
+  Sequence Length N = 2048
+  Total FLOPs: 3.436e+10
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :   40.872 ms    0.84 TFLOPS
+  Stage 1 (Fused 1-thr/row):   76.845 ms    0.45 TFLOPS  maxErr=1.91e-06  meanRelErr=1.08e-03
+  Stage 2 (Tiled coop fp16):   63.638 ms    0.54 TFLOPS  maxErr=1.91e-06  meanRelErr=1.08e-03
+  Stage 3 (wmma TC fp16)   :    3.928 ms    8.75 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+  Stage 4 (wmma 64x64)     :    3.648 ms    9.42 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+  Stage 5 (FA-2 deferred l):    3.651 ms    9.41 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+  Stage 6 (async dbl-buf):    3.467 ms    9.91 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+  Stage 7 (Smem Padded)   :    1.252 ms   27.44 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+  Stage 8 (CuTe FA-2)    :    0.839 ms   40.94 TFLOPS  maxErr=1.91e-06  meanRelErr=1.07e-03
+
+------------------------------------------------------------
+  Sequence Length N = 4096
+  Total FLOPs: 1.374e+11
+------------------------------------------------------------
+  Stage 0 (Naive 3-kernel) :  168.042 ms    0.82 TFLOPS
+  Stage 1 (Fused 1-thr/row):  273.065 ms    0.50 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
+  Stage 2 (Tiled coop fp16):  253.927 ms    0.54 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
+  Stage 3 (wmma TC fp16)   :   15.556 ms    8.84 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+  Stage 4 (wmma 64x64)     :   13.785 ms    9.97 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+  Stage 5 (FA-2 deferred l):   13.787 ms    9.97 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+  Stage 6 (async dbl-buf):   13.159 ms   10.44 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+  Stage 7 (Smem Padded)   :    4.665 ms   29.46 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+  Stage 8 (CuTe FA-2)    :    3.262 ms   42.13 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+
+============================================================
+  Done.
+============================================================
+
+--- cuBLAS Tensor Core ceiling ---
+============================================================
+  cuBLAS fp16 Tensor Core Ceiling — A100 40GB
+  B=2  nh=16  d=64  B*nh=32
+  Both GEMMs back-to-back, no softmax — best possible.
+============================================================
+
+  N = 1024
+    GEMM-I  (Q@K^T) only :    0.078 ms   55.19 TFLOPS
+    GEMM-II (P@V)   only :    0.070 ms   61.50 TFLOPS
+    Both GEMMs (ceiling) :    0.151 ms   56.79 TFLOPS  <-- target
+
+  N = 2048
+    GEMM-I  (Q@K^T) only :    0.261 ms   65.79 TFLOPS
+    GEMM-II (P@V)   only :    0.229 ms   74.90 TFLOPS
+    Both GEMMs (ceiling) :    0.503 ms   68.35 TFLOPS  <-- target
+
+  N = 4096
+    GEMM-I  (Q@K^T) only :    1.003 ms   68.53 TFLOPS
+    GEMM-II (P@V)   only :    0.941 ms   73.02 TFLOPS
+    Both GEMMs (ceiling) :    1.946 ms   70.63 TFLOPS  <-- target
+
+============================================================
+  Your Stage 4 TFLOPS / cuBLAS ceiling = efficiency %
+============================================================
+
+--- PyTorch SDPA reference ---
+============================================================
+RUNNING: Official FlashAttention-2 (Dao-AILab)
+Config: B=2, nh=16, d=64, dtype=torch.float16
+Device: NVIDIA A100-SXM4-40GB
+============================================================
+
+N=1024  | Time: 0.098 ms | Throughput: 88.08 TFLOPS
+N=2048  | Time: 0.264 ms | Throughput: 130.12 TFLOPS
+N=4096  | Time: 0.982 ms | Throughput: 139.98 TFLOPS
+
+============================================================
+Flash-Attn Version: <module 'torch.ops.flash_attn' from 'torch.ops'>
+Benchmark Completed Successfully.
+============================================================
+
+--- Nsight Systems profiling ---
+nsys profile complete — see logs/profile_stages.nsys-rep
+
+--- Generating summary ---
+============================================================
+  SC4064 FlashAttention — Results Summary
+  Wed Apr 15 19:50:45 +08 2026
+  GPU: NVIDIA A100-SXM4-40GB
+============================================================
+
+=== CUDA Kernel Stages (N=4096) ===
+    Stage 0 (Naive 3-kernel) :  168.042 ms    0.82 TFLOPS
+    Stage 1 (Fused 1-thr/row):  273.065 ms    0.50 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
+    Stage 2 (Tiled coop fp16):  253.927 ms    0.54 TFLOPS  maxErr=9.54e-07  meanRelErr=1.15e-03
+    Stage 3 (wmma TC fp16)   :   15.556 ms    8.84 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 4 (wmma 64x64)     :   13.785 ms    9.97 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 5 (FA-2 deferred l):   13.787 ms    9.97 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 6 (async dbl-buf):   13.159 ms   10.44 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 7 (Smem Padded)   :    4.665 ms   29.46 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+    Stage 8 (CuTe FA-2)    :    3.262 ms   42.13 TFLOPS  maxErr=9.54e-07  meanRelErr=1.14e-03
+
+=== cuBLAS Tensor Core Ceiling ===
+      Both GEMMs (ceiling) :    1.946 ms   70.63 TFLOPS  <-- target
+
+=== Official FlashAttention-2 Reference (fp16) ===
+
+=== Speedup Table (N=4096) ===
+  Stage 0 (Naive):              168.042 ms   0.82 TFLOPS
+  Stage 1 (Fused):              273.065 ms   0.50 TFLOPS
+  Stage 2 (Tiled):              253.927 ms   0.54 TFLOPS
+  Stage 3 (wmma 32x32):          15.556 ms   8.84 TFLOPS
+  Stage 4 (wmma 64x64):          13.785 ms   9.97 TFLOPS
+  Stage 5 (FA-2 deferred):       13.787 ms   9.97 TFLOPS
+  Stage 6 (async dbl-buf):       13.159 ms   10.44 TFLOPS
+  Stage 7 (Smem Padded):          4.665 ms   29.46 TFLOPS
+  Stage 8 (CuTe FA-2):            3.262 ms   42.13 TFLOPS
+  Official Flash-Attn:              --- ms   --- TFLOPS
+  cuBLAS ceiling:                   — ms   70.63 TFLOPS
+
+  Stage 8 vs Naive:      51.5x faster
+  Stage 8 vs Stage 7:    1.43x faster
+  Stage 8 TC efficiency: 59.6% of cuBLAS ceiling
+
+=== Nsight Systems — GPU Kernel Summary ===
+
+============================================================
+
+Job finished: Wed Apr 15 19:50:45 +08 2026
