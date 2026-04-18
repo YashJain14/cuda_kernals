@@ -8,14 +8,14 @@ CFLAGS   = -O3 -arch=sm_80 --use_fast_math -std=c++17 -I$(CUTLASS_PATH)/include 
 LDFLAGS  = -lcublas
 .PHONY: all clean run ref
 all: flash_attn cublas_ref
-flash_attn: flash_attention.cu
+flash_attn: src/flash_attention.cu
 	$(NVCC) $(CFLAGS) $< -o $@
-cublas_ref: cublas_ref.cu
+cublas_ref: src/cublas_ref.cu
 	$(NVCC) $(CFLAGS) $< $(LDFLAGS) -o $@
 run: flash_attn cublas_ref
 	./flash_attn
 	./cublas_ref
-ref: reference.py
-	python3 reference.py
+ref: reference/reference.py
+	python3 reference/reference.py
 clean:
 	rm -f flash_attn cublas_ref

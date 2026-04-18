@@ -10,10 +10,10 @@
 namespace torch { enum ScalarType { kFloat16, kBFloat16, kFloat32 }; }
 #define CHECK_INPUT(x) 
 
-#include "stage11_include/common.h"
-#include "stage11_include/flash_attention.cuh"
-#include "stage11_include/forward_kernel.cuh"
-#include "stage11_include/static_kernel_configuration.cuh"
+#include "../include/common.h"
+#include "../include/flash_attention.cuh"
+#include "../include/forward_kernel.cuh"
+#include "../include/static_kernel_configuration.cuh"
 
 // Config for N=..., d=64. B_r=128, B_c=64, warps=4
 constexpr FlashForwardKernelConfig cfg_stage11 = {
