@@ -1,4 +1,44 @@
-# FlashAttention from Scratch — CUDA Optimization Journey
+# FlashAttention from Scratch (CUDA Optimization)
+
+## Directory Structure
+
+```
+cuda_kernals/
+├── src/                    # CUDA source files
+│   ├── flash_attention.cu  # Stages 0–8: all kernels + benchmark driver
+│   ├── stage9.cu           # Stage 9: Q Hoisting + Swizzled Vᵀ (CuTe, BR=128).
+│   ├── stage10.cu          # Stage 10: ldmatrix + 2 blocks/SM (CuTe)
+│   ├── stage11.cu          # Stage 11 (d=64): Custom PTX Library
+│   ├── stage11_d128.cu     # Stage 11 (d=128): extended PTX kernel
+│   └── cublas_ref.cu       # cuBLAS FP16 GEMM ceiling (no softmax)
+├── include/                # C/CUDA headers for Stage 11
+│   ├── flash_attention.cuh
+│   ├── forward_kernel.cuh
+│   ├── static_kernel_configuration.cuh
+│   └── ...                 # array, layout, gemm, softmax, PTX wrappers, etc.
+├── reference/              # Python reference implementations
+│   ├── reference.py        # PyTorch FlashAttention-2 reference (d=64)
+│   └── reference_d128.py   # PyTorch FlashAttention-2 reference (d=128)
+├── scripts/                # PBS job submission scripts + Nsight profiling
+│   ├── submit_job.pbs      # Full pipeline: build, Stages 0–8, cuBLAS, PyTorch ref, profile
+│   ├── submit_stage9.pbs
+│   ├── submit_stage10.pbs
+│   ├── submit_stage11.pbs
+│   ├── submit_stage11_d128.pbs
+│   ├── submit_ref.pbs      # Official FlashAttention-2 PyTorch reference
+│   └── profile.sh          # Nsight Compute profiling wrapper
+├── docs/                   # Technical documentation
+│   ├── STAGES.md           # Per-stage deep dive: algorithm, smem layout, why-fast
+│   ├── BENCHMARK.md        # Full results tables (d=64 and d=128)
+│   └── STAGE11.md          # Stage 11 walkthrough: config structs, tensor types, kernel flow
+├── report_and_slides/      # Project report and presentation slides
+│   ├── FlashAttention Presentation.pdf
+│   └── SC4064 Group Project Report.pdf
+├── logs/                   # Benchmark output logs from A100 runs
+├── cutlass/                # CUTLASS 3.x git submodule (CuTe library, Stages 8–10)
+├── Makefile
+└── README.md
+```
 
 This project implements the **FlashAttention-2 forward pass** from scratch in CUDA, progressing through **11 stages** of GPU optimization on an NVIDIA A100-SXM4-40GB. The final kernel reaches **146.53 TFLOPS** (d=64) and **216.00 TFLOPS** (d=128), exceeding the official FlashAttention-2 by ~4.7% and ~1.6% respectively.
 
@@ -15,7 +55,7 @@ make run
 make ref
 
 # Profile with Nsight Compute
-bash profile.sh
+bash scripts/profile.sh
 ```
 
 ## Running on a PBS Cluster (NTU HPC)
@@ -24,25 +64,25 @@ Each PBS script submits a single GPU job (`select=1:ngpus=1`) to the `normal` qu
 
 | Script | What it runs | Walltime | Output log |
 |--------|-------------|----------|------------|
-| `submit_job.pbs` | Full pipeline: build, Stages 0–8, cuBLAS ceiling, PyTorch ref, Nsight profile | 45 min | `logs/bench_cuda.log`, `logs/bench_cublas.log`, `logs/bench_pytorch.log`, `logs/summary.log` |
-| `submit_stage9.pbs` | Stage 9 benchmark only | 15 min | `logs/stage9_output.log` |
-| `submit_stage10.pbs` | Stage 10 benchmark only | 15 min | `logs/stage10_output.log` |
-| `submit_stage11.pbs` | Stage 11 d=64 benchmark | 15 min | `logs/stage11_output.log` |
-| `submit_stage11_d128.pbs` | Stage 11 d=128 benchmark | 15 min | `logs/stage11_d128_output.log` |
-| `submit_ref.pbs` | Official FlashAttention-2 PyTorch reference | 10 min | `logs/ref_output.log` |
+| `scripts/submit_job.pbs` | Full pipeline: build, Stages 0–8, cuBLAS ceiling, PyTorch ref, Nsight profile | 45 min | `logs/bench_cuda.log`, `logs/bench_cublas.log`, `logs/bench_pytorch.log`, `logs/summary.log` |
+| `scripts/submit_stage9.pbs` | Stage 9 benchmark only | 15 min | `logs/stage9_output.log` |
+| `scripts/submit_stage10.pbs` | Stage 10 benchmark only | 15 min | `logs/stage10_output.log` |
+| `scripts/submit_stage11.pbs` | Stage 11 d=64 benchmark | 15 min | `logs/stage11_output.log` |
+| `scripts/submit_stage11_d128.pbs` | Stage 11 d=128 benchmark | 15 min | `logs/stage11_d128_output.log` |
+| `scripts/submit_ref.pbs` | Official FlashAttention-2 PyTorch reference | 10 min | `logs/ref_output.log` |
 
 ```bash
 # Submit the full benchmark (Stages 0–8 + cuBLAS + PyTorch ref + Nsight)
-qsub submit_job.pbs
+qsub scripts/submit_job.pbs
 
 # Submit individual stage benchmarks
-qsub submit_stage9.pbs
-qsub submit_stage10.pbs
-qsub submit_stage11.pbs
-qsub submit_stage11_d128.pbs
+qsub scripts/submit_stage9.pbs
+qsub scripts/submit_stage10.pbs
+qsub scripts/submit_stage11.pbs
+qsub scripts/submit_stage11_d128.pbs
 
 # Submit the official FA-2 reference (requires flashenv conda env)
-qsub submit_ref.pbs
+qsub scripts/submit_ref.pbs
 
 # Check job status
 qstat -u $USER
@@ -109,16 +149,17 @@ All TFLOPS values are measured on **NVIDIA A100-SXM4-40GB** (CUDA 12.1, PyTorch 
 
 | File | Description |
 |------|-------------|
-| `flash_attention.cu` | Stages 0–8: all kernels + benchmark driver (2236 lines) |
-| `stage9.cu` | Stage 9: CuTe + BR=128 |
-| `stage10.cu` | Stage 10: ldmatrix + 2 blocks/SM |
-| `stage11.cu` | Stage 11 (d=64): PTX hand-tuned entry point |
-| `stage11_d128.cu` | Stage 11 (d=128): extended PTX kernel |
-| `stage11_include/` | 18 `.cuh` headers: Tensor/Layout/Swizzle/PTX wrappers |
-| `cublas_ref.cu` | cuBLAS FP16 GEMM ceiling (no softmax) |
-| `reference.py` | PyTorch FlashAttention-2 reference (d=64) |
-| `reference_d128.py` | PyTorch FlashAttention-2 reference (d=128) |
-| `profile.sh` | Nsight Compute profiling wrapper |
+| `src/flash_attention.cu` | Stages 0–8: all kernels + benchmark driver (2236 lines) |
+| `src/stage9.cu` | Stage 9: CuTe + BR=128 |
+| `src/stage10.cu` | Stage 10: ldmatrix + 2 blocks/SM |
+| `src/stage11.cu` | Stage 11 (d=64): PTX hand-tuned entry point |
+| `src/stage11_d128.cu` | Stage 11 (d=128): extended PTX kernel |
+| `src/cublas_ref.cu` | cuBLAS FP16 GEMM ceiling (no softmax) |
+| `include/` | 18 `.cuh` headers: Tensor/Layout/Swizzle/PTX wrappers |
+| `reference/reference.py` | PyTorch FlashAttention-2 reference (d=64) |
+| `reference/reference_d128.py` | PyTorch FlashAttention-2 reference (d=128) |
+| `scripts/profile.sh` | Nsight Compute profiling wrapper |
+| `scripts/submit_*.pbs` | PBS job submission scripts for NTU HPC |
 | `Makefile` | Build system targeting sm_80 (A100) |
 | `logs/` | Benchmark output logs from A100 runs |
 
@@ -126,9 +167,9 @@ All TFLOPS values are measured on **NVIDIA A100-SXM4-40GB** (CUDA 12.1, PyTorch 
 
 | File | Description |
 |------|-------------|
-| [`STAGES.md`](STAGES.md) | Per-stage technical deep dive: algorithm, smem layout, why-fast |
-| [`BENCHMARK.md`](BENCHMARK.md) | Full results tables for d=64 and d=128 across all sequence lengths |
-| [`STAGE11.md`](STAGE11.md) | Stage 11 code walkthrough: config structs, tensor types, kernel flow |
+| [`docs/STAGES.md`](docs/STAGES.md) | Per-stage technical deep dive: algorithm, smem layout, why-fast |
+| [`docs/BENCHMARK.md`](docs/BENCHMARK.md) | Full results tables for d=64 and d=128 across all sequence lengths |
+| [`docs/STAGE11.md`](docs/STAGE11.md) | Stage 11 code walkthrough: config structs, tensor types, kernel flow |
 
 ## Configuration
 
@@ -147,9 +188,9 @@ All TFLOPS values are measured on **NVIDIA A100-SXM4-40GB** (CUDA 12.1, PyTorch 
 ```bash
 # Requires CUDA 12+, C++17, sm_80 (A100)
 nvcc -O3 -arch=sm_80 --use_fast_math -std=c++17 \
-     -I./cutlass/include flash_attention.cu -o flash_attn
+     -I./cutlass/include src/flash_attention.cu -o flash_attn
 ```
 
-External dependencies (git submodules):
+External dependencies:
 - `cutlass/` — CUTLASS 3.x (CuTe library, used in Stages 8–10)
 - `flash-attention/` — Dao-AILab reference implementation

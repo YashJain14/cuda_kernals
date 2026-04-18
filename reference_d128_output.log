@@ -1,0 +1,13 @@
+============================================================
+RUNNING: Official FlashAttention-2 (d=128)
+Config: B=4, nh=16, d=128, dtype=torch.float16
+Device: NVIDIA A100-SXM4-40GB
+============================================================
+
+N=1024  | Time: 0.230 ms | Throughput: 149.20 TFLOPS
+N=2048  | Time: 0.825 ms | Throughput: 166.61 TFLOPS
+N=4096  | Time: 2.587 ms | Throughput: 212.52 TFLOPS
+
+============================================================
+Benchmark Completed Successfully.
+============================================================

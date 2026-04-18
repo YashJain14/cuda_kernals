@@ -3,7 +3,7 @@
 //
 //  Measures the raw hardware upper bound for the two GEMMs
 //  in attention (Q@K^T and P@V) using cuBLAS Tensor Cores.
-//  No softmax overhead — this is the best our kernels can hope for.
+//  No softmax overhead so this is the best our kernels can hope for.
 //
 //  Build:  nvcc -O3 -arch=sm_80 cublas_ref.cu -lcublas -o cublas_ref
 //  Run:    ./cublas_ref

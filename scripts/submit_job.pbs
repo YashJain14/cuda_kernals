@@ -70,7 +70,7 @@ echo ""
 
 # ── PyTorch reference ─────────────────────────────────────────────────────────
 echo "--- PyTorch SDPA reference ---"
-python3 reference.py 2>&1 | tee "$LOG_DIR/bench_pytorch.log"
+python3 reference/reference.py 2>&1 | tee "$LOG_DIR/bench_pytorch.log"
 echo ""
 
 # ── Nsight Systems profiling ──────────────────────────────────────────────────
